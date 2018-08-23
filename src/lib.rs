@@ -183,7 +183,6 @@ macro_rules! into_tag {
 }
 
 impl HTMLMinifier {
-
     /// Create a new HTMLMinifier instance.
     pub fn new() -> HTMLMinifier {
         HTMLMinifier {
@@ -591,6 +590,15 @@ impl HTMLMinifier {
 
         Ok(minifier.get_html())
     }
+}
+
+/// Minify HTML.
+pub fn minify(html: &str) -> Result<String, &'static str> {
+    let mut minifier = HTMLMinifier::new();
+
+    minifier.digest(html)?;
+
+    Ok(minifier.get_html())
 }
 
 #[cfg(test)]
