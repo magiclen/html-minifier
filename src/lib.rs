@@ -582,6 +582,15 @@ impl HTMLMinifier {
 
         self.out.into_iter().collect()
     }
+
+    /// Minify HTML.
+    pub fn minify(html: &str) -> Result<String, &'static str> {
+        let mut minifier = HTMLMinifier::new();
+
+        minifier.digest(html)?;
+
+        Ok(minifier.get_html())
+    }
 }
 
 #[cfg(test)]
