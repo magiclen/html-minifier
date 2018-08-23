@@ -20,6 +20,94 @@ You should notice that the HTML code is generated and minified simultaneously, w
 ## Examples
 
 
+```rust
+extern crate html_minifier;
+
+use html_minifier::HTMLMinifier;
+
+let mut html_minifier = HTMLMinifier::new();
+
+html_minifier.digest(r#"
+                <!DOCTYPE html>
+                <html lang=en>
+                    <  head>
+                        <head  name=viewport  >
+                    </head  >
+                    <body     class="container    bg-light" >
+                        <input type="text" value='123   456'    />
+                        <!-- Content -->
+                        123456 <b>big</b> 789
+
+                    <  /body>
+                </  html>
+        "#).unwrap();
+
+assert_eq!(r#"<!DOCTYPEhtml><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
+```
+
+```rust
+extern crate html_minifier;
+
+use html_minifier::HTMLMinifier;
+
+let mut html_minifier = HTMLMinifier::new();
+
+html_minifier.digest(r#"<pre   lang="html"  >
+    <html>
+        1234567
+    </html></pre>
+    <div>
+        1234567
+    </div>
+    <pre>
+        1234567
+    </pre>"#).unwrap();
+
+assert_eq!(r#"<pre lang="html">
+    <html>
+        1234567
+    </html></pre><div>1234567</div><pre>
+        1234567
+    </pre>"#, html_minifier.get_html());
+```
+
+```rust
+extern crate html_minifier;
+
+use html_minifier::HTMLMinifier;
+
+let mut html_minifier = HTMLMinifier::new();
+
+html_minifier.digest(r#"<script>
+        alert('1234!')    ;
+
+        </script>"#).unwrap();
+
+assert_eq!("<script>alert('1234!');</script>", html_minifier.get_html());
+```
+
+```rust
+extern crate html_minifier;
+
+use html_minifier::HTMLMinifier;
+
+let mut html_minifier = HTMLMinifier::new();
+
+html_minifier.digest(r#"<style>
+h1 {
+    color: blue;
+    font-family: verdana;
+    font-size: 300%;
+}
+p  {
+    color: red;
+    font-family: courier;
+    font-size: 160%;
+}
+        </style>"#).unwrap();
+
+assert_eq!("<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>", html_minifier.get_html());
+```
 
 ## Crates.io
 
