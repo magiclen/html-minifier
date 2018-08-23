@@ -42,7 +42,7 @@ html_minifier.digest(r#"
                 </  html>
         "#).unwrap();
 
-assert_eq!(r#"<!DOCTYPEhtml><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
+assert_eq!(r#"<!DOCTYPE html><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
 ```
 
 ```rust

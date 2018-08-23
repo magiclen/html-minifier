@@ -36,7 +36,7 @@
 //!                 </  html>
 //!         "#).unwrap();
 //!
-//! assert_eq!(r#"<!DOCTYPEhtml><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
+//! assert_eq!(r#"<!DOCTYPE html><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
 //! ```
 //!
 //! ```
@@ -452,8 +452,9 @@ impl HTMLMinifier {
                             self.counter = 1;
                         } else {
                             self.counter = 0;
-                            self.ignoring_space = false;
+
                         }
+                        self.ignoring_space = false;
                         self.in_start_tagging = true;
                         self.start_tag.clear();
                         self.start_tag.push(c);
@@ -781,7 +782,7 @@ mod tests {
                 </  html>
         "#).unwrap();
 
-        assert_eq!(r#"<!DOCTYPEhtml><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
+        assert_eq!(r#"<!DOCTYPE html><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
     }
 
     #[test]
