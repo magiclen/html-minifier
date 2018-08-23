@@ -1,0 +1,18 @@
+[package]
+name = "html-minifier"
+version = "1.0.0"
+authors = ["Magic Len <len@magiclen.org>"]
+repository = "https://github.com/magiclen/html-minifier"
+homepage = "https://magiclen.org/html-minifier"
+keywords = ["html", "minify"]
+categories = ["parsing"]
+description= "This tool can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>` elements."
+readme = "README.md"
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "magiclen/html-minifier", branch = "master" }
+appveyor = { repository = "magiclen/html-minifier", branch = "master", service = "github" }
+
+[dependencies]
+minifier = "0.0.19"
