@@ -452,7 +452,6 @@ impl HTMLMinifier {
                             self.counter = 1;
                         } else {
                             self.counter = 0;
-
                         }
                         self.ignoring_space = false;
                         self.in_start_tagging = true;
@@ -806,6 +805,15 @@ mod tests {
     </html></pre><div>1234567</div><pre>
         1234567
     </pre>"#, html_minifier.get_html());
+    }
+
+    #[test]
+    fn pre_ascii_control_characters() {
+        let mut html_minifier = HTMLMinifier::new();
+
+        html_minifier.digest("<pre>\t\t1234567\n\t\t\t\x00890</pre>").unwrap();
+
+        assert_eq!("<pre>\t\t1234567\n\t\t\t890</pre>", html_minifier.get_html());
     }
 
     #[test]
