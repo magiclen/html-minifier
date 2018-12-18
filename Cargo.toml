@@ -1,6 +1,6 @@
 [package]
 name = "html-minifier"
-version = "1.1.3"
+version = "1.1.4"
 authors = ["Magic Len <len@magiclen.org>"]
 repository = "https://github.com/magiclen/html-minifier"
 homepage = "https://magiclen.org/html-minifier"
@@ -15,4 +15,4 @@ travis-ci = { repository = "magiclen/html-minifier", branch = "master" }
 appveyor = { repository = "magiclen/html-minifier", branch = "master", service = "github" }
 
 [dependencies]
-minifier = "0.0.20"
+minifier = "0.0.21"
