@@ -292,7 +292,7 @@ impl HTMLMinifier {
                 } else if self.counter == 8 && c == '>' {
                     self.in_js_tag = false;
 
-                    let mut buffer = &mut self.buffer;
+                    let buffer = &mut self.buffer;
                     let mut temp = Vec::new();
 
                     let mut e = buffer.len() - 1;
@@ -353,7 +353,7 @@ impl HTMLMinifier {
                 } else if self.counter == 7 && c == '>' {
                     self.in_css_tag = false;
 
-                    let mut buffer = &mut self.buffer;
+                    let buffer = &mut self.buffer;
                     let mut temp = Vec::new();
 
                     let mut e = buffer.len() - 1;
