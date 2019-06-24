@@ -111,6 +111,7 @@ pub use minifier::js;
 pub use minifier::css;
 
 /// This struct helps you generate and minify your HTML code in the same time.
+#[derive(Debug)]
 pub struct HTMLMinifier {
     out: Vec<char>,
     buffer: Vec<char>,
