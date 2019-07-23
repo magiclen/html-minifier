@@ -83,7 +83,7 @@ html_minifier.digest(r#"<script>
 
         </script>"#).unwrap();
 
-assert_eq!("<script>alert('1234!');</script>", html_minifier.get_html());
+assert_eq!("<script>alert('1234!')</script>", html_minifier.get_html());
 ```
 
 ```rust
