@@ -1,6 +1,6 @@
 [package]
 name = "html-minifier"
-version = "1.1.10"
+version = "1.1.11"
 authors = ["Magic Len <len@magiclen.org>"]
 repository = "https://github.com/magiclen/html-minifier"
 homepage = "https://magiclen.org/html-minifier"
@@ -10,9 +10,9 @@ description= "This tool can help you generate and minify your HTML code at the s
 readme = "README.md"
 license = "MIT"
 
-[badges]
-travis-ci = { repository = "magiclen/html-minifier", branch = "master" }
-appveyor = { repository = "magiclen/html-minifier", branch = "master", service = "github" }
+[badges.travis-ci]
+repository = "magiclen/html-minifier"
+branch = "master"
 
 [dependencies]
 minifier = "0.0.33"
