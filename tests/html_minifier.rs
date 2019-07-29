@@ -214,6 +214,40 @@ fn pre_ascii_control_characters() {
 }
 
 #[test]
+fn textarea() {
+    let mut html_minifier = HTMLMinifier::new();
+
+    html_minifier.digest(r#"<textarea   class="control"  >Hi,
+
+This is a textarea.
+You can write multi-line messages here.
+</textarea>
+    <div>
+        1234567
+    </div>
+    <textarea>
+        1234567
+    </textarea>"#).unwrap();
+
+    assert_eq!(r#"<textarea class="control">Hi,
+
+This is a textarea.
+You can write multi-line messages here.
+</textarea><div>1234567</div><textarea>
+        1234567
+    </textarea>"#, html_minifier.get_html());
+}
+
+#[test]
+fn textarea_ascii_control_characters() {
+    let mut html_minifier = HTMLMinifier::new();
+
+    html_minifier.digest("<textarea>\t\t1234567\n\t\t\t\x00890</textarea>").unwrap();
+
+    assert_eq!("<textarea>\t\t1234567\n\t\t\t890</textarea>", html_minifier.get_html());
+}
+
+#[test]
 fn script() {
     let mut html_minifier = HTMLMinifier::new();
 

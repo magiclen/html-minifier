@@ -123,6 +123,7 @@ pub struct HTMLMinifier {
     in_start_tagging: bool,
     in_end_tagging: bool,
     in_pre_tag: bool,
+    in_textarea_tag: bool,
     in_js_tag: bool,
     in_css_tag: bool,
     in_attribute: bool,
@@ -180,6 +181,13 @@ macro_rules! into_tag {
                     $s.buffer.clear();
                     $s.counter = 0;
                 }
+            } else if len == 8 {
+                let tag = &$s.start_tag;
+
+                if tag[0].to_ascii_lowercase() == 't' && tag[1].to_ascii_lowercase() == 'e' && tag[2].to_ascii_lowercase() == 'x' && tag[3].to_ascii_lowercase() == 't' && tag[4].to_ascii_lowercase() == 'a' && tag[5].to_ascii_lowercase() == 'r'  && tag[6].to_ascii_lowercase() == 'e'  && tag[7].to_ascii_lowercase() == 'a' {
+                    $s.in_textarea_tag = true;
+                    $s.counter = 0;
+                }
             }
         }
     };
@@ -199,6 +207,7 @@ impl HTMLMinifier {
             in_start_tagging: false,
             in_end_tagging: false,
             in_pre_tag: false,
+            in_textarea_tag: false,
             in_js_tag: false,
             in_css_tag: false,
             in_attribute: false,
@@ -262,6 +271,58 @@ impl HTMLMinifier {
                     self.is_just_finish_tagging = true;
                 } else {
                     if self.counter == 1 || self.counter == 2 || self.counter == 5 {
+                        if !is_ascii_control!(c) {
+                            self.counter = 0;
+                        }
+                    } else {
+                        self.counter = 0;
+                    }
+                }
+            } else if self.in_textarea_tag {
+                if c == '<' {
+                    if self.counter == 0 {
+                        self.counter = 1;
+                    }
+                } else if self.counter == 1 && c == '/' {
+                    self.counter = 2;
+                } else if self.counter == 2 && c.to_ascii_lowercase() == 't' {
+                    self.counter = 3;
+                } else if self.counter == 3 && c.to_ascii_lowercase() == 'e' {
+                    self.counter = 4;
+                } else if self.counter == 4 && c.to_ascii_lowercase() == 'x' {
+                    self.counter = 5;
+                } else if self.counter == 5 && c.to_ascii_lowercase() == 't' {
+                    self.counter = 6;
+                } else if self.counter == 6 && c.to_ascii_lowercase() == 'a' {
+                    self.counter = 7;
+                } else if self.counter == 7 && c.to_ascii_lowercase() == 'r' {
+                    self.counter = 8;
+                } else if self.counter == 8 && c.to_ascii_lowercase() == 'e' {
+                    self.counter = 9;
+                } else if self.counter == 9 && c.to_ascii_lowercase() == 'a' {
+                    self.counter = 10;
+                } else if self.counter == 10 && c == '>' {
+                    self.in_textarea_tag = false;
+
+                    let out = &mut self.out;
+
+                    let mut e = out.len() - 1;
+
+                    loop {
+                        let c = *out.get(e).unwrap();
+
+                        if is_ascii_control!(c) {
+                            out.remove(e);
+                        } else if c == '<' {
+                            break;
+                        }
+
+                        e = e - 1;
+                    }
+
+                    self.is_just_finish_tagging = true;
+                } else {
+                    if self.counter == 1 || self.counter == 2 || self.counter == 10 {
                         if !is_ascii_control!(c) {
                             self.counter = 0;
                         }

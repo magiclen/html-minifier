@@ -12,7 +12,7 @@ HTML is minified by the following rules:
 * Removal of **unused** multiple whitespaces(spaces, tabs and newlines).
 * Minification of CSS code in `<style>` elements by using [minifier](https://crates.io/crates/minifier).
 * Minification of JS code in `<script>` elements by using [minifier](https://crates.io/crates/minifier).
-* Prevention of minifing `<pre>` elements.
+* Prevention of minifing `<pre>` and `<textarea>` elements.
 
 You should notice that the HTML code is generated and minified simultaneously, which means you don't need an extra space to store you original HTML source.
  
