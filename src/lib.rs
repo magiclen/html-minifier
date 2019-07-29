@@ -1,6 +1,6 @@
 /*!
 # HTML Minifier
-This tool can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>` elements.
+This tool can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>` and `<textarea>` elements.
 
 HTML is minified by the following rules:
 
