@@ -15,8 +15,12 @@ fn remove_ascii_control() {
 fn remove_starting_spaces() {
     let mut html_minifier = HTMLMinifier::new();
 
-    html_minifier.digest(r#"
-            <html>"#).unwrap();
+    html_minifier
+        .digest(
+            r#"
+            <html>"#,
+        )
+        .unwrap();
 
     assert_eq!("<html>", html_minifier.get_html());
 }
@@ -163,7 +167,9 @@ fn inline() {
 fn text_mix_basic() {
     let mut html_minifier = HTMLMinifier::new();
 
-    html_minifier.digest(r#"
+    html_minifier
+        .digest(
+            r#"
                 <!DOCTYPE html>
                 <html lang=en>
                     <  head>
@@ -176,7 +182,9 @@ fn text_mix_basic() {
 
                     <  /body>
                 </  html>
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
     assert_eq!(r#"<!DOCTYPE html><html lang=en><head><head name=viewport></head><body class="container bg-light"><input type="text" value='123   456'/>123456 <b>big</b> 789</body></html>"#, html_minifier.get_html());
 }
@@ -185,7 +193,9 @@ fn text_mix_basic() {
 fn pre() {
     let mut html_minifier = HTMLMinifier::new();
 
-    html_minifier.digest(r#"<pre   lang="html"  >
+    html_minifier
+        .digest(
+            r#"<pre   lang="html"  >
     <html>
         1234567
     </html></pre>
@@ -194,14 +204,19 @@ fn pre() {
     </div>
     <pre>
         1234567
-    </pre>"#).unwrap();
+    </pre>"#,
+        )
+        .unwrap();
 
-    assert_eq!(r#"<pre lang="html">
+    assert_eq!(
+        r#"<pre lang="html">
     <html>
         1234567
     </html></pre><div>1234567</div><pre>
         1234567
-    </pre>"#, html_minifier.get_html());
+    </pre>"#,
+        html_minifier.get_html()
+    );
 }
 
 #[test]
@@ -217,7 +232,9 @@ fn pre_ascii_control_characters() {
 fn textarea() {
     let mut html_minifier = HTMLMinifier::new();
 
-    html_minifier.digest(r#"<textarea   class="control"  >Hi,
+    html_minifier
+        .digest(
+            r#"<textarea   class="control"  >Hi,
 
 This is a textarea.
 You can write multi-line messages here.
@@ -227,15 +244,20 @@ You can write multi-line messages here.
     </div>
     <textarea>
         1234567
-    </textarea>"#).unwrap();
+    </textarea>"#,
+        )
+        .unwrap();
 
-    assert_eq!(r#"<textarea class="control">Hi,
+    assert_eq!(
+        r#"<textarea class="control">Hi,
 
 This is a textarea.
 You can write multi-line messages here.
 </textarea><div>1234567</div><textarea>
         1234567
-    </textarea>"#, html_minifier.get_html());
+    </textarea>"#,
+        html_minifier.get_html()
+    );
 }
 
 #[test]
@@ -251,10 +273,14 @@ fn textarea_ascii_control_characters() {
 fn script() {
     let mut html_minifier = HTMLMinifier::new();
 
-    html_minifier.digest(r#"<script>
+    html_minifier
+        .digest(
+            r#"<script>
         alert('1234!')    ;
 
-        </script>"#).unwrap();
+        </script>"#,
+        )
+        .unwrap();
 
     assert_eq!("<script>alert('1234!')</script>", html_minifier.get_html());
 }
@@ -263,7 +289,9 @@ fn script() {
 fn style() {
     let mut html_minifier = HTMLMinifier::new();
 
-    html_minifier.digest(r#"<style>
+    html_minifier
+        .digest(
+            r#"<style>
 h1 {
     color: blue;
     font-family: verdana;
@@ -274,7 +302,9 @@ p  {
     font-family: courier;
     font-size: 160%;
 }
-        </style>"#).unwrap();
+        </style>"#,
+        )
+        .unwrap();
 
     assert_eq!("<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>", html_minifier.get_html());
 }
