@@ -181,6 +181,22 @@ fn remove_useless_whitespaces_from_tag() {
     minifier.reset();
 
     {
+        minifier.digest(r#"<div   id="name  xxx"    class="">"#).unwrap();
+
+        assert_eq!(r#"<div id="name  xxx" class="">"#, minifier.get_html());
+    }
+
+    minifier.reset();
+
+    {
+        minifier.digest(r#"<div   id="name  xxx"    class="  ">"#).unwrap();
+
+        assert_eq!(r#"<div id="name  xxx" class="">"#, minifier.get_html());
+    }
+
+    minifier.reset();
+
+    {
         minifier.digest(r#"< input type="text"  value="123   45"  / >"#).unwrap();
 
         assert_eq!(r#"<input type="text" value="123   45"/>"#, minifier.get_html());

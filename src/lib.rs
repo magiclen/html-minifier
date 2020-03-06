@@ -808,17 +808,21 @@ impl HTMLMinifier {
                 self.last_new_line = false;
             } else if self.is_tagging {
                 if self.in_attribute {
-                    if c == self.attribute_quote && *self.out.last().unwrap() != '\\' {
-                        self.in_attribute = false;
+                    if c == self.attribute_quote {
+                        let last = *self.out.last().unwrap();
 
-                        if self.handled_attribute && self.ignoring_space {
-                            self.out.remove(self.out.len() - 1);
-                        }
+                        if last != '\\' {
+                            self.in_attribute = false;
 
-                        if self.saved_attribute {
-                            self.attribute_value =
-                                self.buffer.iter().collect::<String>().to_lowercase();
-                            self.buffer.clear();
+                            if self.handled_attribute && last == ' ' {
+                                self.out.remove(self.out.len() - 1);
+                            }
+
+                            if self.saved_attribute {
+                                self.attribute_value =
+                                    self.buffer.iter().collect::<String>().to_lowercase();
+                                self.buffer.clear();
+                            }
                         }
                     }
 
