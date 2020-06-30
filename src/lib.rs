@@ -349,11 +349,7 @@ impl HTMLMinifier {
                     2 => {
                         match c {
                             'p' | 'P' => self.tag_counter = 3,
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
+                            _ => self.tag_counter = 0,
                         }
                     }
                     3 => {
