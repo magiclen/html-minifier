@@ -264,13 +264,13 @@ fn pre() {
                 r#"<pre   lang="html"  >
     <html>
         1234567
-    </html></ pre>
+    </html></pre>
     <div>
         1234567
     </div>
     <pre>
         1234567
-    < /pre   >"#,
+    </pre   >"#,
             )
             .unwrap();
 
@@ -307,13 +307,13 @@ fn code() {
                 r#"<code   lang="html"  >
     <html>
         1234567
-    </html></ code>
+    </html></code>
     <div>
         1234567
     </div>
     <code>
         1234567
-    < /code   >"#,
+    </code   >"#,
             )
             .unwrap();
 
@@ -351,13 +351,13 @@ fn textarea() {
 
 This is a textarea.
 You can write multi-line messages here.
-</ textarea>
+</textarea>
     <div>
         1234567
     </div>
     <textarea>
         1234567
-    < /textarea   >"#,
+    </textarea   >"#,
             )
             .unwrap();
 
@@ -395,7 +395,7 @@ fn javascript() {
                 r#"< script  >
         alert('1234!')    ;
 
-        < /  script >"#,
+        </script >"#,
             )
             .unwrap();
 
@@ -410,7 +410,7 @@ fn javascript() {
                 r#"< script  type="  application/javascript  "  >
         alert('1234!')    ;
 
-        < /  script >"#,
+        </script >"#,
             )
             .unwrap();
 
@@ -428,10 +428,10 @@ fn unsupported_script_type() {
     {
         minifier
             .digest(
-                r#"< script  type="  application/ecmascript  "  >
+                r#"<script  type="  application/ecmascript  "  >
         alert('1234!')    ;
 
-        < /  script >"#,
+        </script >"#,
             )
             .unwrap();
 
@@ -463,7 +463,7 @@ p  {
     font-family: courier;
     font-size: 160%;
 }
-        < /  style >"#,
+        </style >"#,
             )
             .unwrap();
 
@@ -486,7 +486,7 @@ p  {
     font-family: courier;
     font-size: 160%;
 }
-        < /  style >"#,
+        </style >"#,
             )
             .unwrap();
 
@@ -515,7 +515,7 @@ p  {
     font-family: courier;
     font-size: 160%;
 }
-        < /  style >"#,
+        </style >"#,
             )
             .unwrap();
 

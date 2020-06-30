@@ -136,6 +136,7 @@ pub struct HTMLMinifier {
     attribute_quote: char,
     handled_attribute: bool,
     saved_attribute: bool,
+    last_confirmed_valid_length: usize,
 
     // Flags
     #[educe(Default = true)]
@@ -162,7 +163,7 @@ pub struct HTMLMinifier {
 
 #[inline]
 fn is_space_or_new_line(c: char) -> bool {
-    c == ' ' || c == '\t' || c == '\n'
+    (c >= '\x09' && c <= '\x0D') || (c >= '\x1C' && c <= '\x20')
 }
 
 #[inline]
@@ -296,7 +297,6 @@ impl HTMLMinifier {
     /// Reset this html minifier in order to input a HTML text. The option settings will be maintained.
     pub fn reset(&mut self) {
         self.out.clear();
-        self.buffer.clear();
 
         self.tag_counter = 0;
 
@@ -320,356 +320,531 @@ impl HTMLMinifier {
             if is_ascii_control(c) {
                 continue;
             } else if self.is_comment {
-                if c == '-' {
-                    self.tag_counter += 1;
-                } else if c == '>' && self.tag_counter >= 2 {
-                    self.is_comment = false;
+                match c {
+                    '-' => self.tag_counter += 1,
+                    '>' => {
+                        if self.tag_counter >= 2 {
+                            self.is_comment = false;
+                        }
+                    }
+                    _ => (),
                 }
 
                 if self.remove_comments {
                     continue;
                 }
             } else if self.in_pre_tag {
-                if c == '<' {
-                    if self.tag_counter == 0 {
-                        self.tag_counter = 1;
-                    }
-                } else if self.tag_counter == 1 && c == '/' {
-                    self.tag_counter = 2;
-                } else if self.tag_counter == 2 && c.to_ascii_lowercase() == 'p' {
-                    self.tag_counter = 3;
-                } else if self.tag_counter == 3 && c.to_ascii_lowercase() == 'r' {
-                    self.tag_counter = 4;
-                } else if self.tag_counter == 4 && c.to_ascii_lowercase() == 'e' {
-                    self.tag_counter = 5;
-                } else if self.tag_counter == 5 && c == '>' {
-                    self.in_pre_tag = false;
-
-                    let out = &mut self.out;
-
-                    let mut e = out.len() - 1;
-
-                    loop {
-                        let c = *out.get(e).unwrap();
-
-                        if is_space_or_new_line(c) {
-                            out.remove(e);
-                        } else if c == '<' {
-                            break;
+                match self.tag_counter {
+                    0 => {
+                        if c == '<' {
+                            self.tag_counter = 1;
                         }
-
-                        e -= 1;
                     }
-
-                    self.is_just_finish_tagging = true;
-                } else if self.tag_counter == 1 || self.tag_counter == 2 || self.tag_counter == 5 {
-                    if !is_space_or_new_line(c) {
-                        self.tag_counter = 0;
+                    1 => {
+                        match c {
+                            '/' => self.tag_counter = 2,
+                            _ => self.tag_counter = 0,
+                        }
                     }
-                } else {
-                    self.tag_counter = 0;
+                    2 => {
+                        match c {
+                            'p' | 'P' => self.tag_counter = 3,
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    3 => {
+                        match c {
+                            'r' | 'R' => self.tag_counter = 4,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    4 => {
+                        match c {
+                            'e' | 'E' => {
+                                self.tag_counter = 5;
+
+                                self.last_confirmed_valid_length = self.out.len() + 1;
+                            }
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    5 => {
+                        match c {
+                            '>' => {
+                                self.in_pre_tag = false;
+
+                                unsafe {
+                                    self.out.set_len(self.last_confirmed_valid_length);
+                                }
+
+                                self.is_just_finish_tagging = true;
+                            }
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             } else if self.in_code_tag {
-                if c == '<' {
-                    if self.tag_counter == 0 {
-                        self.tag_counter = 1;
-                    }
-                } else if self.tag_counter == 1 && c == '/' {
-                    self.tag_counter = 2;
-                } else if self.tag_counter == 2 && c.to_ascii_lowercase() == 'c' {
-                    self.tag_counter = 3;
-                } else if self.tag_counter == 3 && c.to_ascii_lowercase() == 'o' {
-                    self.tag_counter = 4;
-                } else if self.tag_counter == 4 && c.to_ascii_lowercase() == 'd' {
-                    self.tag_counter = 5;
-                } else if self.tag_counter == 5 && c.to_ascii_lowercase() == 'e' {
-                    self.tag_counter = 6;
-                } else if self.tag_counter == 6 && c == '>' {
-                    self.in_code_tag = false;
-
-                    let out = &mut self.out;
-
-                    let mut e = out.len() - 1;
-
-                    loop {
-                        let c = *out.get(e).unwrap();
-
-                        if is_space_or_new_line(c) {
-                            out.remove(e);
-                        } else if c == '<' {
-                            break;
+                match self.tag_counter {
+                    0 => {
+                        if c == '<' {
+                            self.tag_counter = 1;
                         }
-
-                        e -= 1;
                     }
-
-                    self.is_just_finish_tagging = true;
-                } else if self.tag_counter == 1 || self.tag_counter == 2 || self.tag_counter == 6 {
-                    if !is_space_or_new_line(c) {
-                        self.tag_counter = 0;
+                    1 => {
+                        match c {
+                            '/' => self.tag_counter = 2,
+                            _ => self.tag_counter = 0,
+                        }
                     }
-                } else {
-                    self.tag_counter = 0;
+                    2 => {
+                        match c {
+                            'c' | 'C' => self.tag_counter = 3,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    3 => {
+                        match c {
+                            'o' | 'O' => self.tag_counter = 4,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    4 => {
+                        match c {
+                            'd' | 'D' => self.tag_counter = 5,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    5 => {
+                        match c {
+                            'e' | 'E' => {
+                                self.tag_counter = 6;
+
+                                self.last_confirmed_valid_length = self.out.len() + 1;
+                            }
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    6 => {
+                        match c {
+                            '>' => {
+                                self.in_code_tag = false;
+
+                                unsafe {
+                                    self.out.set_len(self.last_confirmed_valid_length);
+                                }
+
+                                self.is_just_finish_tagging = true;
+                            }
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             } else if self.in_textarea_tag {
-                if c == '<' {
-                    if self.tag_counter == 0 {
-                        self.tag_counter = 1;
-                    }
-                } else if self.tag_counter == 1 && c == '/' {
-                    self.tag_counter = 2;
-                } else if self.tag_counter == 2 && c.to_ascii_lowercase() == 't' {
-                    self.tag_counter = 3;
-                } else if self.tag_counter == 3 && c.to_ascii_lowercase() == 'e' {
-                    self.tag_counter = 4;
-                } else if self.tag_counter == 4 && c.to_ascii_lowercase() == 'x' {
-                    self.tag_counter = 5;
-                } else if self.tag_counter == 5 && c.to_ascii_lowercase() == 't' {
-                    self.tag_counter = 6;
-                } else if self.tag_counter == 6 && c.to_ascii_lowercase() == 'a' {
-                    self.tag_counter = 7;
-                } else if self.tag_counter == 7 && c.to_ascii_lowercase() == 'r' {
-                    self.tag_counter = 8;
-                } else if self.tag_counter == 8 && c.to_ascii_lowercase() == 'e' {
-                    self.tag_counter = 9;
-                } else if self.tag_counter == 9 && c.to_ascii_lowercase() == 'a' {
-                    self.tag_counter = 10;
-                } else if self.tag_counter == 10 && c == '>' {
-                    self.in_textarea_tag = false;
-
-                    let out = &mut self.out;
-
-                    let mut e = out.len() - 1;
-
-                    loop {
-                        let c = *out.get(e).unwrap();
-
-                        if is_space_or_new_line(c) {
-                            out.remove(e);
-                        } else if c == '<' {
-                            break;
+                match self.tag_counter {
+                    0 => {
+                        if c == '<' {
+                            self.tag_counter = 1;
                         }
-
-                        e -= 1;
                     }
-
-                    self.is_just_finish_tagging = true;
-                } else if self.tag_counter == 1 || self.tag_counter == 2 || self.tag_counter == 10 {
-                    if !is_space_or_new_line(c) {
-                        self.tag_counter = 0;
+                    1 => {
+                        match c {
+                            '/' => self.tag_counter = 2,
+                            _ => self.tag_counter = 0,
+                        }
                     }
-                } else {
-                    self.tag_counter = 0;
+                    2 => {
+                        match c {
+                            't' | 'T' => self.tag_counter = 3,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    3 => {
+                        match c {
+                            'e' | 'E' => self.tag_counter = 4,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    4 => {
+                        match c {
+                            'x' | 'X' => self.tag_counter = 5,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    5 => {
+                        match c {
+                            't' | 'T' => self.tag_counter = 6,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    6 => {
+                        match c {
+                            'a' | 'A' => self.tag_counter = 7,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    7 => {
+                        match c {
+                            'r' | 'R' => self.tag_counter = 8,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    8 => {
+                        match c {
+                            'e' | 'E' => self.tag_counter = 9,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    9 => {
+                        match c {
+                            'a' | 'A' => {
+                                self.tag_counter = 10;
+
+                                self.last_confirmed_valid_length = self.out.len() + 1;
+                            }
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    10 => {
+                        match c {
+                            '>' => {
+                                self.in_textarea_tag = false;
+
+                                unsafe {
+                                    self.out.set_len(self.last_confirmed_valid_length);
+                                }
+
+                                self.is_just_finish_tagging = true;
+                            }
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             } else if self.in_js_tag {
                 self.buffer.push(c);
 
-                if c == '<' {
-                    if self.tag_counter == 0 {
-                        self.tag_counter = 1;
-                    }
-                } else if self.tag_counter == 1 && c == '/' {
-                    self.tag_counter = 2;
-                } else if self.tag_counter == 2 && c.to_ascii_lowercase() == 's' {
-                    self.tag_counter = 3;
-                } else if self.tag_counter == 3 && c.to_ascii_lowercase() == 'c' {
-                    self.tag_counter = 4;
-                } else if self.tag_counter == 4 && c.to_ascii_lowercase() == 'r' {
-                    self.tag_counter = 5;
-                } else if self.tag_counter == 5 && c.to_ascii_lowercase() == 'i' {
-                    self.tag_counter = 6;
-                } else if self.tag_counter == 6 && c.to_ascii_lowercase() == 'p' {
-                    self.tag_counter = 7;
-                } else if self.tag_counter == 7 && c.to_ascii_lowercase() == 't' {
-                    self.tag_counter = 8;
-                } else if self.tag_counter == 8 && c == '>' {
-                    self.in_js_tag = false;
-
-                    let buffer = &mut self.buffer;
-                    let mut temp = Vec::new();
-
-                    let mut e = buffer.len() - 1;
-
-                    loop {
-                        let c = *buffer.get(e).unwrap();
-
-                        buffer.remove(e);
-
+                match self.tag_counter {
+                    0 => {
                         if c == '<' {
-                            temp.insert(0, '<');
-                            break;
-                        } else if !is_space_or_new_line(c) {
-                            temp.insert(0, c);
+                            self.tag_counter = 1;
                         }
-
-                        e -= 1;
                     }
-
-                    let minified_js = js::minify(&buffer.iter().collect::<String>());
-                    buffer.clear();
-
-                    self.out.extend(minified_js.chars());
-
-                    self.out.extend(temp);
-
-                    self.is_just_finish_tagging = true;
-                } else if self.tag_counter == 1 || self.tag_counter == 2 || self.tag_counter == 8 {
-                    if !is_space_or_new_line(c) {
-                        self.tag_counter = 0;
+                    1 => {
+                        match c {
+                            '/' => self.tag_counter = 2,
+                            _ => self.tag_counter = 0,
+                        }
                     }
-                } else {
-                    self.tag_counter = 0;
+                    2 => {
+                        match c {
+                            's' | 'S' => self.tag_counter = 3,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    3 => {
+                        match c {
+                            'c' | 'C' => self.tag_counter = 4,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    4 => {
+                        match c {
+                            'r' | 'R' => self.tag_counter = 5,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    5 => {
+                        match c {
+                            'i' | 'I' => self.tag_counter = 6,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    6 => {
+                        match c {
+                            'p' | 'P' => self.tag_counter = 7,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    7 => {
+                        match c {
+                            't' | 'T' => {
+                                self.tag_counter = 8;
+
+                                self.last_confirmed_valid_length = self.buffer.len();
+                            }
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    8 => {
+                        match c {
+                            '>' => {
+                                self.in_js_tag = false;
+
+                                let minified_js = js::minify(
+                                    &self.buffer[..(self.last_confirmed_valid_length - 8)]
+                                        .iter()
+                                        .collect::<String>(),
+                                );
+
+                                self.out.extend(minified_js.chars());
+
+                                self.out.extend(
+                                    &self.buffer[(self.last_confirmed_valid_length - 8)
+                                        ..self.last_confirmed_valid_length],
+                                );
+                                self.out.push('>');
+
+                                self.is_just_finish_tagging = true;
+                            }
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
 
                 continue;
             } else if self.in_script_tag {
-                if c == '<' {
-                    if self.tag_counter == 0 {
-                        self.tag_counter = 1;
-                    }
-                } else if self.tag_counter == 1 && c == '/' {
-                    self.tag_counter = 2;
-                } else if self.tag_counter == 2 && c.to_ascii_lowercase() == 's' {
-                    self.tag_counter = 3;
-                } else if self.tag_counter == 3 && c.to_ascii_lowercase() == 'c' {
-                    self.tag_counter = 4;
-                } else if self.tag_counter == 4 && c.to_ascii_lowercase() == 'r' {
-                    self.tag_counter = 5;
-                } else if self.tag_counter == 5 && c.to_ascii_lowercase() == 'i' {
-                    self.tag_counter = 6;
-                } else if self.tag_counter == 6 && c.to_ascii_lowercase() == 'p' {
-                    self.tag_counter = 7;
-                } else if self.tag_counter == 7 && c.to_ascii_lowercase() == 't' {
-                    self.tag_counter = 8;
-                } else if self.tag_counter == 8 && c == '>' {
-                    self.in_script_tag = false;
-
-                    let out = &mut self.out;
-
-                    let mut e = out.len() - 1;
-
-                    loop {
-                        let c = *out.get(e).unwrap();
-
-                        if is_space_or_new_line(c) {
-                            out.remove(e);
-                        } else if c == '<' {
-                            break;
+                match self.tag_counter {
+                    0 => {
+                        if c == '<' {
+                            self.tag_counter = 1;
                         }
-
-                        e -= 1;
                     }
-
-                    self.is_just_finish_tagging = true;
-                } else if self.tag_counter == 1 || self.tag_counter == 2 || self.tag_counter == 8 {
-                    if !is_space_or_new_line(c) {
-                        self.tag_counter = 0;
+                    1 => {
+                        match c {
+                            '/' => self.tag_counter = 2,
+                            _ => self.tag_counter = 0,
+                        }
                     }
-                } else {
-                    self.tag_counter = 0;
+                    2 => {
+                        match c {
+                            's' | 'S' => self.tag_counter = 3,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    3 => {
+                        match c {
+                            'c' | 'C' => self.tag_counter = 4,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    4 => {
+                        match c {
+                            'r' | 'R' => self.tag_counter = 5,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    5 => {
+                        match c {
+                            'i' | 'I' => self.tag_counter = 6,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    6 => {
+                        match c {
+                            'p' | 'P' => self.tag_counter = 7,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    7 => {
+                        match c {
+                            't' | 'T' => {
+                                self.tag_counter = 8;
+
+                                self.last_confirmed_valid_length = self.out.len() + 1;
+                            }
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    8 => {
+                        match c {
+                            '>' => {
+                                self.in_script_tag = false;
+
+                                unsafe {
+                                    self.out.set_len(self.last_confirmed_valid_length);
+                                }
+
+                                self.is_just_finish_tagging = true;
+                            }
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             } else if self.in_css_tag {
                 self.buffer.push(c);
 
-                if c == '<' {
-                    if self.tag_counter == 0 {
-                        self.tag_counter = 1;
-                    }
-                } else if self.tag_counter == 1 && c == '/' {
-                    self.tag_counter = 2;
-                } else if self.tag_counter == 2 && c.to_ascii_lowercase() == 's' {
-                    self.tag_counter = 3;
-                } else if self.tag_counter == 3 && c.to_ascii_lowercase() == 't' {
-                    self.tag_counter = 4;
-                } else if self.tag_counter == 4 && c.to_ascii_lowercase() == 'y' {
-                    self.tag_counter = 5;
-                } else if self.tag_counter == 5 && c.to_ascii_lowercase() == 'l' {
-                    self.tag_counter = 6;
-                } else if self.tag_counter == 6 && c.to_ascii_lowercase() == 'e' {
-                    self.tag_counter = 7;
-                } else if self.tag_counter == 7 && c == '>' {
-                    self.in_css_tag = false;
-
-                    let buffer = &mut self.buffer;
-                    let mut temp = Vec::new();
-
-                    let mut e = buffer.len() - 1;
-
-                    loop {
-                        let c = *buffer.get(e).unwrap();
-
-                        buffer.remove(e);
-
+                match self.tag_counter {
+                    0 => {
                         if c == '<' {
-                            temp.insert(0, '<');
-                            break;
-                        } else if !is_space_or_new_line(c) {
-                            temp.insert(0, c);
+                            self.tag_counter = 1;
                         }
-
-                        e -= 1;
                     }
-
-                    let minified_css = css::minify(&buffer.iter().collect::<String>())?;
-                    buffer.clear();
-
-                    self.out.extend(minified_css.chars());
-
-                    self.out.extend(temp);
-
-                    self.is_just_finish_tagging = true;
-                } else if self.tag_counter == 1 || self.tag_counter == 2 || self.tag_counter == 7 {
-                    if !is_space_or_new_line(c) {
-                        self.tag_counter = 0;
+                    1 => {
+                        match c {
+                            '/' => self.tag_counter = 2,
+                            _ => self.tag_counter = 0,
+                        }
                     }
-                } else {
-                    self.tag_counter = 0;
+                    2 => {
+                        match c {
+                            's' | 'S' => self.tag_counter = 3,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    3 => {
+                        match c {
+                            't' | 'T' => self.tag_counter = 4,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    4 => {
+                        match c {
+                            'y' | 'Y' => self.tag_counter = 5,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    5 => {
+                        match c {
+                            'l' | 'L' => self.tag_counter = 6,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    6 => {
+                        match c {
+                            'e' | 'E' => {
+                                self.tag_counter = 7;
+
+                                self.last_confirmed_valid_length = self.buffer.len();
+                            }
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    7 => {
+                        match c {
+                            '>' => {
+                                self.in_css_tag = false;
+
+                                let minified_css = css::minify(
+                                    &self.buffer[..(self.last_confirmed_valid_length - 7)]
+                                        .iter()
+                                        .collect::<String>(),
+                                )?;
+
+                                self.out.extend(minified_css.chars());
+
+                                self.out.extend(
+                                    &self.buffer[(self.last_confirmed_valid_length - 7)
+                                        ..self.last_confirmed_valid_length],
+                                );
+                                self.out.push('>');
+
+                                self.is_just_finish_tagging = true;
+                            }
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
 
                 continue;
             } else if self.in_style_tag {
-                if c == '<' {
-                    if self.tag_counter == 0 {
-                        self.tag_counter = 1;
-                    }
-                } else if self.tag_counter == 1 && c == '/' {
-                    self.tag_counter = 2;
-                } else if self.tag_counter == 2 && c.to_ascii_lowercase() == 's' {
-                    self.tag_counter = 3;
-                } else if self.tag_counter == 3 && c.to_ascii_lowercase() == 't' {
-                    self.tag_counter = 4;
-                } else if self.tag_counter == 4 && c.to_ascii_lowercase() == 'y' {
-                    self.tag_counter = 5;
-                } else if self.tag_counter == 5 && c.to_ascii_lowercase() == 'l' {
-                    self.tag_counter = 6;
-                } else if self.tag_counter == 6 && c.to_ascii_lowercase() == 'e' {
-                    self.tag_counter = 7;
-                } else if self.tag_counter == 7 && c == '>' {
-                    self.in_style_tag = false;
-
-                    let out = &mut self.out;
-
-                    let mut e = out.len() - 1;
-
-                    loop {
-                        let c = *out.get(e).unwrap();
-
-                        if is_space_or_new_line(c) {
-                            out.remove(e);
-                        } else if c == '<' {
-                            break;
+                match self.tag_counter {
+                    0 => {
+                        if c == '<' {
+                            self.tag_counter = 1;
                         }
-
-                        e -= 1;
                     }
-
-                    self.is_just_finish_tagging = true;
-                } else if self.tag_counter == 1 || self.tag_counter == 2 || self.tag_counter == 7 {
-                    if !is_space_or_new_line(c) {
-                        self.tag_counter = 0;
+                    1 => {
+                        match c {
+                            '/' => self.tag_counter = 2,
+                            _ => self.tag_counter = 0,
+                        }
                     }
-                } else {
-                    self.tag_counter = 0;
+                    2 => {
+                        match c {
+                            's' | 'S' => self.tag_counter = 3,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    3 => {
+                        match c {
+                            't' | 'T' => self.tag_counter = 4,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    4 => {
+                        match c {
+                            'y' | 'Y' => self.tag_counter = 5,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    5 => {
+                        match c {
+                            'l' | 'L' => self.tag_counter = 6,
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    6 => {
+                        match c {
+                            'e' | 'E' => {
+                                self.tag_counter = 7;
+
+                                self.last_confirmed_valid_length = self.out.len() + 1;
+                            }
+                            _ => self.tag_counter = 0,
+                        }
+                    }
+                    7 => {
+                        match c {
+                            '>' => {
+                                self.in_style_tag = false;
+
+                                unsafe {
+                                    self.out.set_len(self.last_confirmed_valid_length);
+                                }
+
+                                self.is_just_finish_tagging = true;
+                            }
+                            _ => {
+                                if !is_space_or_new_line(c) {
+                                    self.tag_counter = 0;
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             } else if is_space_or_new_line(c) {
                 if self.ignoring_space {
