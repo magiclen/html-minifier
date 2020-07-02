@@ -682,34 +682,30 @@ impl HTMLMinifier {
                                     start = p + 1;
 
                                     self.step = Step::StartTagIn;
-                                } else {
-                                    if self.in_handled_attribute && is_whitespace(e) {
-                                        if self.quoted_value_empty {
-                                            self.out.extend_from_slice(&text_bytes[start..p]);
-                                            start = p + 1;
-                                        } else {
-                                            if self.quoted_value_spacing {
-                                                debug_assert_eq!(start, p);
-                                                start = p + 1;
-                                            } else {
-                                                self.out.extend_from_slice(&text_bytes[start..p]);
-                                                start = p + 1;
-                                                self.out.push(b' ');
-                                                if self.in_attribute_type {
-                                                    self.buffer.push(b' ');
-                                                }
-
-                                                self.quoted_value_spacing = true;
-                                                self.quoted_value_empty = false;
-                                            }
-                                        }
+                                } else if self.in_handled_attribute && is_whitespace(e) {
+                                    if self.quoted_value_empty {
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p + 1;
+                                    } else if self.quoted_value_spacing {
+                                        debug_assert_eq!(start, p);
+                                        start = p + 1;
                                     } else {
-                                        self.quoted_value_spacing = false;
-                                        self.quoted_value_empty = false;
-
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p + 1;
+                                        self.out.push(b' ');
                                         if self.in_attribute_type {
-                                            self.buffer.push(e);
+                                            self.buffer.push(b' ');
                                         }
+
+                                        self.quoted_value_spacing = true;
+                                        self.quoted_value_empty = false;
+                                    }
+                                } else {
+                                    self.quoted_value_spacing = false;
+                                    self.quoted_value_empty = false;
+
+                                    if self.in_attribute_type {
+                                        self.buffer.push(e);
                                     }
                                 }
                             }
@@ -745,15 +741,10 @@ impl HTMLMinifier {
                                     start = p + 1;
 
                                     self.step = Step::TagEnd;
-                                } else {
-                                    match e {
-                                        b'>' => {
-                                            self.last_cj = false;
-                                            self.last_space = 0;
-                                            self.step = Step::InitialRemainOneWhitespace;
-                                        }
-                                        _ => (),
-                                    }
+                                } else if e == b'>' {
+                                    self.last_cj = false;
+                                    self.last_space = 0;
+                                    self.step = Step::InitialRemainOneWhitespace;
                                 }
                             }
                             Step::TagEnd => {
@@ -823,9 +814,8 @@ impl HTMLMinifier {
 
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'-' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'-' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
@@ -853,9 +843,8 @@ impl HTMLMinifier {
                             Step::ScriptDefault => {
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'<' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'<' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
@@ -930,9 +919,8 @@ impl HTMLMinifier {
 
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'<' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'<' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
@@ -1026,9 +1014,8 @@ impl HTMLMinifier {
                             Step::StyleDefault => {
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'<' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'<' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
@@ -1097,9 +1084,8 @@ impl HTMLMinifier {
 
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'<' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'<' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
@@ -1193,9 +1179,8 @@ impl HTMLMinifier {
                             Step::Pre => {
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'<' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'<' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
@@ -1248,9 +1233,8 @@ impl HTMLMinifier {
                             Step::Code => {
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'<' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'<' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
@@ -1309,9 +1293,8 @@ impl HTMLMinifier {
                             Step::Textarea => {
                                 match self.step_counter {
                                     0 => {
-                                        match e {
-                                            b'<' => self.step_counter = 1,
-                                            _ => (),
+                                        if e == b'<' {
+                                            self.step_counter = 1;
                                         }
                                     }
                                     1 => {
