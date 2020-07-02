@@ -1425,7 +1425,7 @@ impl HTMLMinifier {
                             // </?
                             // <a?
                             // </a?
-                            // To `InitialIgnoreWhitespace`.
+                            // To `InitialRemainOneWhitespace`.
                             self.last_cj = false;
                             self.last_space = 0;
                             self.step = Step::InitialRemainOneWhitespace;
@@ -1554,7 +1554,7 @@ impl HTMLMinifier {
                             // </?
                             // <a?
                             // </a?
-                            // To `InitialIgnoreWhitespace`.
+                            // To `InitialRemainOneWhitespace`.
                             self.last_cj = false;
                             self.last_space = 0;
                             self.step = Step::InitialRemainOneWhitespace;
