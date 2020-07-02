@@ -3,18 +3,24 @@ HTML Minifier
 
 [![Build Status](https://travis-ci.org/magiclen/html-minifier.svg?branch=master)](https://travis-ci.org/magiclen/html-minifier)
 
-This tool can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements.
+This library can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements.
 
 HTML is minified by the following rules:
 
-* Removal of ascii control characters (0x00-0x08, 0x11-0x1F, 0x7F).
-* Removal of comments. (Optional)
-* Removal of **unused** multiple whitespaces(spaces, tabs and newlines).
-* Minification of CSS code in `<style>` elements by using [minifier](https://crates.io/crates/minifier).
-* Minification of JS code in `<script>` elements by using [minifier](https://crates.io/crates/minifier).
-* Prevention of minifing `<pre>`, `<code>` and `<textarea>` elements.
+* ASCII control characters (0x00-0x08, 0x11-0x1F, 0x7F) are always removed.
+* Comments can be optionally removed. (removed by default)
+* **Useless** whitespaces (spaces, tabs and newlines) are removed. (whitespaces between CJ characters are checked)
+* Whitespaces (spaces, tabs and newlines) are converted to `'\x20'`, if possible.
+* Empty attribute values (e.g value="") are removed.
+* The inner HTML of all elements is minified except for the following elements:
+    * `<pre>`
+    * `<textarea>`
+    * `<code>` (optionally, minified by default)
+    * `<style>` (if the **type** attribute is unsupported)
+    * `<script>` (if the **type** attribute is unsupported)
+* JS code and CSS code in `<script>` and `<style>` elements are minified by [minifier](https://crates.io/crates/minifier).
 
-You should notice that the HTML code is generated and minified simultaneously, which means you don't need an extra space to store you original HTML source.
+The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
 
 ## Examples
 
@@ -25,22 +31,28 @@ use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
 
-html_minifier.digest(r#"
-                <!DOCTYPE html>
-                <html lang=en>
-                    <  head>
-                        <head  name=viewport  >
-                    </head  >
-                    <body     class="container    bg-light" >
-                        <input type="text" value='123   456'    />
-                        <!-- Content -->
-                        123456 <b>big</b> 789
+html_minifier.digest("<!DOCTYPE html>   <html  ").unwrap();
+html_minifier.digest("lang=  en >").unwrap();
+html_minifier.digest("
+<head>
+    <head name=viewport>
+</head>
+").unwrap();
+html_minifier.digest("
+<body class=' container   bg-light '>
+    <input type='text' value='123   456' readonly=''  />
 
-                    <  /body>
-                </  html>
-        "#).unwrap();
+    123456
+    <b>big</b> 789
+    ab
+    c
+    中文
+    字
+</body>
+").unwrap();
+html_minifier.digest("</html  >").unwrap();
 
-assert_eq!(r#"<!DOCTYPE html> <html lang=en> <head> <head name=viewport> </head> <body class="container bg-light"> <input type="text" value='123   456'/> 123456 <b>big</b> 789 </body> </html>"#, html_minifier.get_html());
+assert_eq!("<!DOCTYPE html> <html lang=en> <head> <head name=viewport> </head> <body class='container bg-light'> <input type='text' value='123   456' readonly/> 123456 <b>big</b> 789 ab c 中文字 </body> </html>", html_minifier.get_html());
 ```
 
 ```rust
@@ -50,23 +62,9 @@ use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
 
-html_minifier.digest(r#"<pre   lang="html"  >
-    <html>
-        1234567
-    </html></pre>
-    <div>
-        1234567
-    </div>
-    <pre>
-        1234567
-    </pre>"#).unwrap();
+html_minifier.digest("<pre  >   Hello  world!   </pre  >").unwrap();
 
-assert_eq!(r#"<pre lang="html">
-    <html>
-        1234567
-    </html></pre> <div> 1234567 </div> <pre>
-        1234567
-    </pre>"#, html_minifier.get_html());
+assert_eq!("<pre>   Hello  world!   </pre>", html_minifier.get_html());
 ```
 
 ```rust
@@ -76,35 +74,19 @@ use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
 
-html_minifier.digest(r#"<script>
-        alert('1234!')    ;
+html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 
-        </script>"#).unwrap();
-
-assert_eq!("<script>alert('1234!')</script>", html_minifier.get_html());
+assert_eq!("<script type='application/javascript'>alert('Hello!')</script>", html_minifier.get_html());
 ```
 
-```rust
-extern crate html_minifier;
+## No Std
 
-use html_minifier::HTMLMinifier;
+Disable the default features to compile this crate without std.
 
-let mut html_minifier = HTMLMinifier::new();
-
-html_minifier.digest(r#"<style>
-h1 {
-    color: blue;
-    font-family: verdana;
-    font-size: 300%;
-}
-p  {
-    color: red;
-    font-family: courier;
-    font-size: 160%;
-}
-        </style>"#).unwrap();
-
-assert_eq!("<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>", html_minifier.get_html());
+```toml
+[dependencies.html-minifier]
+version = "*"
+default-features = false
 ```
 
 ## Crates.io

@@ -1,17 +1,24 @@
 /*!
 # HTML Minifier
-This tool can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements.
+
+This library can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements.
 
 HTML is minified by the following rules:
 
-* Removal of ascii control characters (0x00-0x08, 0x11-0x1F, 0x7F).
-* Removal of comments. (Optional)
-* Removal of **unused** multiple whitespaces(spaces, tabs and newlines).
-* Minification of CSS code in `<style>` elements by using [minifier](https://crates.io/crates/minifier).
-* Minification of JS code in `<script>` elements by using [minifier](https://crates.io/crates/minifier).
-* Prevention of minifing `<pre>`, `<code>` and `<textarea>` elements.
+* ASCII control characters (0x00-0x08, 0x11-0x1F, 0x7F) are always removed.
+* Comments can be optionally removed. (removed by default)
+* **Useless** whitespaces (spaces, tabs and newlines) are removed. (whitespaces between CJ characters are checked)
+* Whitespaces (spaces, tabs and newlines) are converted to `'\x20'`, if possible.
+* Empty attribute values (e.g value="") are removed.
+* The inner HTML of all elements is minified except for the following elements:
+    * `<pre>`
+    * `<textarea>`
+    * `<code>` (optionally, minified by default)
+    * `<style>` (if the `type` attribute is unsupported)
+    * `<script>` (if the `type` attribute is unsupported)
+* JS code and CSS code in `<script>` and `<style>` elements are minified by [minifier](https://crates.io/crates/minifier).
 
-You should notice that the HTML code is generated and minified simultaneously, which means you don't need an extra space to store you original HTML source.
+The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
 
 ## Examples
 
@@ -22,22 +29,28 @@ use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
 
-html_minifier.digest(r#"
-                <!DOCTYPE html>
-                <html lang=en>
-                    <  head>
-                        <head  name=viewport  >
-                    </head  >
-                    <body     class="container    bg-light" >
-                        <input type="text" value='123   456'    />
-                        <!-- Content -->
-                        123456 <b>big</b> 789
+html_minifier.digest("<!DOCTYPE html>   <html  ").unwrap();
+html_minifier.digest("lang=  en >").unwrap();
+html_minifier.digest("
+<head>
+    <head name=viewport>
+</head>
+").unwrap();
+html_minifier.digest("
+<body class=' container   bg-light '>
+    <input type='text' value='123   456' readonly=''  />
 
-                    <  /body>
-                </  html>
-        "#).unwrap();
+    123456
+    <b>big</b> 789
+    ab
+    c
+    中文
+    字
+</body>
+").unwrap();
+html_minifier.digest("</html  >").unwrap();
 
-assert_eq!(r#"<!DOCTYPE html> <html lang=en> <head> <head name=viewport> </head> <body class="container bg-light"> <input type="text" value='123   456'/> 123456 <b>big</b> 789 </body> </html>"#, html_minifier.get_html());
+assert_eq!("<!DOCTYPE html> <html lang=en> <head> <head name=viewport> </head> <body class='container bg-light'> <input type='text' value='123   456' readonly/> 123456 <b>big</b> 789 ab c 中文字 </body> </html>", html_minifier.get_html());
 ```
 
 ```rust
@@ -47,23 +60,9 @@ use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
 
-html_minifier.digest(r#"<pre   lang="html"  >
-    <html>
-        1234567
-    </html></pre>
-    <div>
-        1234567
-    </div>
-    <pre>
-        1234567
-    </pre>"#).unwrap();
+html_minifier.digest("<pre  >   Hello  world!   </pre  >").unwrap();
 
-assert_eq!(r#"<pre lang="html">
-    <html>
-        1234567
-    </html></pre> <div> 1234567 </div> <pre>
-        1234567
-    </pre>"#, html_minifier.get_html());
+assert_eq!("<pre>   Hello  world!   </pre>", html_minifier.get_html());
 ```
 
 ```rust
@@ -73,102 +72,133 @@ use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
 
-html_minifier.digest(r#"<script>
-        alert('1234!')    ;
+html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 
-        </script>"#).unwrap();
-
-assert_eq!("<script>alert('1234!')</script>", html_minifier.get_html());
+assert_eq!("<script type='application/javascript'>alert('Hello!')</script>", html_minifier.get_html());
 ```
 
-```rust
-extern crate html_minifier;
+## No Std
 
-use html_minifier::HTMLMinifier;
+Disable the default features to compile this crate without std.
 
-let mut html_minifier = HTMLMinifier::new();
-
-html_minifier.digest(r#"<style>
-h1 {
-    color: blue;
-    font-family: verdana;
-    font-size: 300%;
-}
-p  {
-    color: red;
-    font-family: courier;
-    font-size: 160%;
-}
-        </style>"#).unwrap();
-
-assert_eq!("<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>", html_minifier.get_html());
+```toml
+[dependencies.html-minifier]
+version = "*"
+default-features = false
 ```
 */
 
-extern crate minifier;
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 #[macro_use]
 extern crate educe;
 
-pub use minifier::css;
-pub use minifier::js;
+extern crate cow_utils;
+extern crate minifier;
+extern crate utf8_width;
+
+mod errors;
+
+use core::cmp::Ordering;
+use core::fmt::{self, Formatter};
+use core::str::{from_utf8_unchecked, FromStr};
+
+use alloc::borrow::Cow;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use cow_utils::CowUtils;
+pub use minifier::{css, js};
+
+pub use errors::*;
+
+#[inline]
+fn str_bytes_fmt(v: &[u8], f: &mut Formatter) -> Result<(), fmt::Error> {
+    f.write_fmt(format_args!("{:?}", unsafe { from_utf8_unchecked(v) }))
+}
+
+#[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
+#[educe(Default)]
+enum Step {
+    #[educe(Default)]
+    Initial,
+    InitialRemainOneWhitespace,
+    InitialIgnoreWhitespace,
+    StartTagInitial,
+    EndTagInitial,
+    StartTag,
+    StartTagIn,
+    StartTagAttributeName,
+    StartTagAttributeNameWaitingValue,
+    StartTagAttributeValueInitial,
+    StartTagUnquotedAttributeValue,
+    StartTagQuotedAttributeValue,
+    EndTag,
+    TagEnd,
+    Doctype,
+    Comment,
+    ScriptDefault,
+    ScriptJavaScript,
+    StyleDefault,
+    StyleCSS,
+    Pre,
+    Code,
+    Textarea,
+}
 
 /// This struct helps you generate and minify your HTML code in the same time.
-#[derive(Debug, Educe, Clone)]
-#[educe(Default(new))]
+#[derive(Educe, Clone)]
+#[educe(Debug, Default(new))]
 pub struct HTMLMinifier {
     #[educe(Default = true)]
     /// Remove HTML comments.
     pub remove_comments: bool,
+    #[educe(Default = true)]
+    /// Minify the content in the `code` element.
+    pub minify_code: bool,
 
     // Buffers
-    out: Vec<char>,
-    buffer: Vec<char>,
-    start_tag: Vec<char>,
-    end_tag: Vec<char>,
-    attribute: String,
-    attribute_value: String,
+    #[educe(Debug(method = "str_bytes_fmt"))]
+    out: Vec<u8>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
+    tag: Vec<u8>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
+    attribute_name: Vec<u8>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
+    buffer: Vec<u8>,
 
-    // Counters
-    tag_counter: u8,
+    // Steps
+    step: Step,
+    step_counter: u8,
 
     // Temp
-    attribute_quote: char,
-    handled_attribute: bool,
-    saved_attribute: bool,
-    last_confirmed_valid_length: usize,
+    quote: u8,
+    last_space: u8,
 
     // Flags
-    #[educe(Default = true)]
-    ignoring_space: bool,
-    last_space: bool,
-    last_new_line: bool,
-    comment_last_space: bool,
-    in_starting_tagging: bool,
-    in_start_tagging: bool,
-    in_end_tagging: bool,
-    in_attribute: bool,
-    is_tagging: bool,
-    is_start_tagging: bool,
-    is_just_finish_tagging: bool,
-    is_comment: bool,
-    in_pre_tag: bool,
-    in_code_tag: bool,
-    in_textarea_tag: bool,
-    in_script_tag: bool,
-    in_js_tag: bool,
-    in_style_tag: bool,
-    in_css_tag: bool,
+    quoted_value_spacing: bool,
+    quoted_value_empty: bool,
+    in_handled_attribute: bool,
+    in_attribute_type: bool,
+    last_cj: bool,
 }
 
 #[inline]
-fn is_space_or_new_line(c: char) -> bool {
-    (c >= '\x09' && c <= '\x0D') || (c >= '\x1C' && c <= '\x20')
+fn is_whitespace(e: u8) -> bool {
+    match e {
+        0x09..=0x0D | 0x1C..=0x20 => true,
+        _ => false,
+    }
 }
 
 #[inline]
-fn is_ascii_control(c: char) -> bool {
-    (c >= '\0' && c <= '\x08') || (c >= '\x11' && c <= '\x1F') || c == '\x7F'
+fn is_ascii_control(e: u8) -> bool {
+    match e {
+        0..=8 | 17..=31 | 127 => true,
+        _ => false,
+    }
 }
 
 #[inline]
@@ -205,895 +235,1427 @@ fn is_cj(c: char) -> bool {
         || (c >= '\u{2F800}' && c <= '\u{2FA1F}') // CJK Compatibility Ideographs Supplement
 }
 
-macro_rules! into_tag {
-    ($s:expr) => {{
-        let len = $s.start_tag.len();
-
-        if len == 3 {
-            let tag = &$s.start_tag;
-
-            if tag[0].to_ascii_lowercase() == 'p'
-                && tag[1].to_ascii_lowercase() == 'r'
-                && tag[2].to_ascii_lowercase() == 'e'
-            {
-                $s.in_pre_tag = true;
-                $s.tag_counter = 0;
-            }
-        } else if len == 4 {
-            let tag = &$s.start_tag;
-
-            if tag[0].to_ascii_lowercase() == 'c'
-                && tag[1].to_ascii_lowercase() == 'o'
-                && tag[2].to_ascii_lowercase() == 'd'
-                && tag[3].to_ascii_lowercase() == 'e'
-            {
-                $s.in_code_tag = true;
-                $s.tag_counter = 0;
-            }
-        } else if len == 5 {
-            let tag = &$s.start_tag;
-
-            if tag[0].to_ascii_lowercase() == 's'
-                && tag[1].to_ascii_lowercase() == 't'
-                && tag[2].to_ascii_lowercase() == 'y'
-                && tag[3].to_ascii_lowercase() == 'l'
-                && tag[4].to_ascii_lowercase() == 'e'
-            {
-                match $s.attribute_value.as_str() {
-                    "" | "text/css" => {
-                        $s.in_css_tag = true;
-                        $s.buffer.clear();
-                        $s.tag_counter = 0;
-                    }
-                    _ => {
-                        $s.in_style_tag = true;
-                        $s.tag_counter = 0;
-                    }
-                }
-            }
-        } else if len == 6 {
-            let tag = &$s.start_tag;
-
-            if tag[0].to_ascii_lowercase() == 's'
-                && tag[1].to_ascii_lowercase() == 'c'
-                && tag[2].to_ascii_lowercase() == 'r'
-                && tag[3].to_ascii_lowercase() == 'i'
-                && tag[4].to_ascii_lowercase() == 'p'
-                && tag[5].to_ascii_lowercase() == 't'
-            {
-                match $s.attribute_value.as_str() {
-                    "" | "application/javascript" => {
-                        $s.in_js_tag = true;
-                        $s.buffer.clear();
-                        $s.tag_counter = 0;
-                    }
-                    _ => {
-                        $s.in_script_tag = true;
-                        $s.tag_counter = 0;
-                    }
-                }
-            }
-        } else if len == 8 {
-            let tag = &$s.start_tag;
-
-            if tag[0].to_ascii_lowercase() == 't'
-                && tag[1].to_ascii_lowercase() == 'e'
-                && tag[2].to_ascii_lowercase() == 'x'
-                && tag[3].to_ascii_lowercase() == 't'
-                && tag[4].to_ascii_lowercase() == 'a'
-                && tag[5].to_ascii_lowercase() == 'r'
-                && tag[6].to_ascii_lowercase() == 'e'
-                && tag[7].to_ascii_lowercase() == 'a'
-            {
-                $s.in_textarea_tag = true;
-                $s.tag_counter = 0;
-            }
-        }
-    }};
+#[inline]
+fn is_bytes_cj(bytes: &[u8]) -> bool {
+    match char::from_str(unsafe { from_utf8_unchecked(bytes) }) {
+        Ok(c) => is_cj(c),
+        Err(_) => false,
+    }
 }
 
 impl HTMLMinifier {
     #[inline]
-    /// Reset this html minifier in order to input a HTML text. The option settings will be maintained.
-    pub fn reset(&mut self) {
-        self.out.clear();
+    fn remove(&mut self, text_bytes: &[u8], start: usize, p: usize, count: usize) {
+        let buffer_length = p - start;
 
-        self.tag_counter = 0;
-
-        self.ignoring_space = true;
-        self.last_space = false;
-        self.last_new_line = false;
-        self.in_starting_tagging = false;
-        self.in_start_tagging = false;
-        self.in_end_tagging = false;
-        self.in_attribute = false;
-        self.is_tagging = false;
-        self.is_start_tagging = false;
-        self.is_just_finish_tagging = false;
-        self.is_comment = false;
+        match buffer_length.cmp(&count) {
+            Ordering::Equal => (),
+            Ordering::Greater => self.out.extend_from_slice(&text_bytes[start..(p - count)]),
+            Ordering::Less => unsafe {
+                self.out.set_len(self.out.len() - (count - buffer_length));
+            },
+        }
     }
 
-    /// Input some text to generate HTML code. You don't need to input a full HTML text at once.
-    #[allow(clippy::cognitive_complexity)]
-    pub fn digest<S: AsRef<str>>(&mut self, text: S) -> Result<(), &'static str> {
-        for c in text.as_ref().chars() {
-            if is_ascii_control(c) {
-                continue;
-            } else if self.is_comment {
-                match c {
-                    '-' => self.tag_counter += 1,
-                    '>' => {
-                        if self.tag_counter >= 2 {
-                            self.is_comment = false;
-                        }
+    #[inline]
+    fn set_flags_by_attribute(&mut self) {
+        match self.attribute_name.as_slice() {
+            b"class" => {
+                self.in_handled_attribute = true;
+                self.in_attribute_type = false;
+            }
+            b"type" => {
+                match self.tag.as_slice() {
+                    b"script" | b"style" => {
+                        self.in_handled_attribute = true;
+                        self.in_attribute_type = true;
+                        self.buffer.clear();
                     }
                     _ => (),
                 }
-
-                if self.remove_comments {
-                    continue;
-                }
-            } else if self.in_pre_tag {
-                match self.tag_counter {
-                    0 => {
-                        if c == '<' {
-                            self.tag_counter = 1;
-                        }
-                    }
-                    1 => {
-                        match c {
-                            '/' => self.tag_counter = 2,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    2 => {
-                        match c {
-                            'p' | 'P' => self.tag_counter = 3,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    3 => {
-                        match c {
-                            'r' | 'R' => self.tag_counter = 4,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    4 => {
-                        match c {
-                            'e' | 'E' => {
-                                self.tag_counter = 5;
-
-                                self.last_confirmed_valid_length = self.out.len() + 1;
-                            }
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    5 => {
-                        match c {
-                            '>' => {
-                                self.in_pre_tag = false;
-
-                                unsafe {
-                                    self.out.set_len(self.last_confirmed_valid_length);
-                                }
-
-                                self.is_just_finish_tagging = true;
-                            }
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            } else if self.in_code_tag {
-                match self.tag_counter {
-                    0 => {
-                        if c == '<' {
-                            self.tag_counter = 1;
-                        }
-                    }
-                    1 => {
-                        match c {
-                            '/' => self.tag_counter = 2,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    2 => {
-                        match c {
-                            'c' | 'C' => self.tag_counter = 3,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    3 => {
-                        match c {
-                            'o' | 'O' => self.tag_counter = 4,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    4 => {
-                        match c {
-                            'd' | 'D' => self.tag_counter = 5,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    5 => {
-                        match c {
-                            'e' | 'E' => {
-                                self.tag_counter = 6;
-
-                                self.last_confirmed_valid_length = self.out.len() + 1;
-                            }
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    6 => {
-                        match c {
-                            '>' => {
-                                self.in_code_tag = false;
-
-                                unsafe {
-                                    self.out.set_len(self.last_confirmed_valid_length);
-                                }
-
-                                self.is_just_finish_tagging = true;
-                            }
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            } else if self.in_textarea_tag {
-                match self.tag_counter {
-                    0 => {
-                        if c == '<' {
-                            self.tag_counter = 1;
-                        }
-                    }
-                    1 => {
-                        match c {
-                            '/' => self.tag_counter = 2,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    2 => {
-                        match c {
-                            't' | 'T' => self.tag_counter = 3,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    3 => {
-                        match c {
-                            'e' | 'E' => self.tag_counter = 4,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    4 => {
-                        match c {
-                            'x' | 'X' => self.tag_counter = 5,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    5 => {
-                        match c {
-                            't' | 'T' => self.tag_counter = 6,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    6 => {
-                        match c {
-                            'a' | 'A' => self.tag_counter = 7,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    7 => {
-                        match c {
-                            'r' | 'R' => self.tag_counter = 8,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    8 => {
-                        match c {
-                            'e' | 'E' => self.tag_counter = 9,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    9 => {
-                        match c {
-                            'a' | 'A' => {
-                                self.tag_counter = 10;
-
-                                self.last_confirmed_valid_length = self.out.len() + 1;
-                            }
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    10 => {
-                        match c {
-                            '>' => {
-                                self.in_textarea_tag = false;
-
-                                unsafe {
-                                    self.out.set_len(self.last_confirmed_valid_length);
-                                }
-
-                                self.is_just_finish_tagging = true;
-                            }
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            } else if self.in_js_tag {
-                self.buffer.push(c);
-
-                match self.tag_counter {
-                    0 => {
-                        if c == '<' {
-                            self.tag_counter = 1;
-                        }
-                    }
-                    1 => {
-                        match c {
-                            '/' => self.tag_counter = 2,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    2 => {
-                        match c {
-                            's' | 'S' => self.tag_counter = 3,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    3 => {
-                        match c {
-                            'c' | 'C' => self.tag_counter = 4,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    4 => {
-                        match c {
-                            'r' | 'R' => self.tag_counter = 5,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    5 => {
-                        match c {
-                            'i' | 'I' => self.tag_counter = 6,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    6 => {
-                        match c {
-                            'p' | 'P' => self.tag_counter = 7,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    7 => {
-                        match c {
-                            't' | 'T' => {
-                                self.tag_counter = 8;
-
-                                self.last_confirmed_valid_length = self.buffer.len();
-                            }
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    8 => {
-                        match c {
-                            '>' => {
-                                self.in_js_tag = false;
-
-                                let minified_js = js::minify(
-                                    &self.buffer[..(self.last_confirmed_valid_length - 8)]
-                                        .iter()
-                                        .collect::<String>(),
-                                );
-
-                                self.out.extend(minified_js.chars());
-
-                                self.out.extend(
-                                    &self.buffer[(self.last_confirmed_valid_length - 8)
-                                        ..self.last_confirmed_valid_length],
-                                );
-                                self.out.push('>');
-
-                                self.is_just_finish_tagging = true;
-                            }
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-
-                continue;
-            } else if self.in_script_tag {
-                match self.tag_counter {
-                    0 => {
-                        if c == '<' {
-                            self.tag_counter = 1;
-                        }
-                    }
-                    1 => {
-                        match c {
-                            '/' => self.tag_counter = 2,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    2 => {
-                        match c {
-                            's' | 'S' => self.tag_counter = 3,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    3 => {
-                        match c {
-                            'c' | 'C' => self.tag_counter = 4,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    4 => {
-                        match c {
-                            'r' | 'R' => self.tag_counter = 5,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    5 => {
-                        match c {
-                            'i' | 'I' => self.tag_counter = 6,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    6 => {
-                        match c {
-                            'p' | 'P' => self.tag_counter = 7,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    7 => {
-                        match c {
-                            't' | 'T' => {
-                                self.tag_counter = 8;
-
-                                self.last_confirmed_valid_length = self.out.len() + 1;
-                            }
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    8 => {
-                        match c {
-                            '>' => {
-                                self.in_script_tag = false;
-
-                                unsafe {
-                                    self.out.set_len(self.last_confirmed_valid_length);
-                                }
-
-                                self.is_just_finish_tagging = true;
-                            }
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            } else if self.in_css_tag {
-                self.buffer.push(c);
-
-                match self.tag_counter {
-                    0 => {
-                        if c == '<' {
-                            self.tag_counter = 1;
-                        }
-                    }
-                    1 => {
-                        match c {
-                            '/' => self.tag_counter = 2,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    2 => {
-                        match c {
-                            's' | 'S' => self.tag_counter = 3,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    3 => {
-                        match c {
-                            't' | 'T' => self.tag_counter = 4,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    4 => {
-                        match c {
-                            'y' | 'Y' => self.tag_counter = 5,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    5 => {
-                        match c {
-                            'l' | 'L' => self.tag_counter = 6,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    6 => {
-                        match c {
-                            'e' | 'E' => {
-                                self.tag_counter = 7;
-
-                                self.last_confirmed_valid_length = self.buffer.len();
-                            }
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    7 => {
-                        match c {
-                            '>' => {
-                                self.in_css_tag = false;
-
-                                let minified_css = css::minify(
-                                    &self.buffer[..(self.last_confirmed_valid_length - 7)]
-                                        .iter()
-                                        .collect::<String>(),
-                                )?;
-
-                                self.out.extend(minified_css.chars());
-
-                                self.out.extend(
-                                    &self.buffer[(self.last_confirmed_valid_length - 7)
-                                        ..self.last_confirmed_valid_length],
-                                );
-                                self.out.push('>');
-
-                                self.is_just_finish_tagging = true;
-                            }
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-
-                continue;
-            } else if self.in_style_tag {
-                match self.tag_counter {
-                    0 => {
-                        if c == '<' {
-                            self.tag_counter = 1;
-                        }
-                    }
-                    1 => {
-                        match c {
-                            '/' => self.tag_counter = 2,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    2 => {
-                        match c {
-                            's' | 'S' => self.tag_counter = 3,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    3 => {
-                        match c {
-                            't' | 'T' => self.tag_counter = 4,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    4 => {
-                        match c {
-                            'y' | 'Y' => self.tag_counter = 5,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    5 => {
-                        match c {
-                            'l' | 'L' => self.tag_counter = 6,
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    6 => {
-                        match c {
-                            'e' | 'E' => {
-                                self.tag_counter = 7;
-
-                                self.last_confirmed_valid_length = self.out.len() + 1;
-                            }
-                            _ => self.tag_counter = 0,
-                        }
-                    }
-                    7 => {
-                        match c {
-                            '>' => {
-                                self.in_style_tag = false;
-
-                                unsafe {
-                                    self.out.set_len(self.last_confirmed_valid_length);
-                                }
-
-                                self.is_just_finish_tagging = true;
-                            }
-                            _ => {
-                                if !is_space_or_new_line(c) {
-                                    self.tag_counter = 0;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            } else if is_space_or_new_line(c) {
-                if self.ignoring_space {
-                    continue;
-                }
-
-                if self.in_start_tagging {
-                    self.in_start_tagging = false;
-                    self.buffer.clear();
-                } else if self.in_end_tagging {
-                    self.in_end_tagging = false;
-                    self.buffer.clear();
-                } else if self.is_tagging {
-                    if self.in_attribute {
-                        if self.handled_attribute {
-                            self.out.push(' ');
-
-                            self.ignoring_space = true;
-                        } else {
-                            self.out.push(c);
-
-                            continue;
-                        }
-                    } else {
-                        self.buffer.clear();
-                    }
-                }
-
-                if c == '\n' {
-                    self.last_new_line = true;
-                }
-
-                self.last_space = true;
-
-                continue;
-            } else if c == '<' && !self.is_tagging {
-                self.is_tagging = true;
-                self.is_start_tagging = true;
-
-                self.in_starting_tagging = true;
-
-                self.comment_last_space = false;
-
-                self.attribute_value.clear();
-
-                if self.last_space && self.out.last().is_some() {
-                    self.out.push(' ');
-                    self.comment_last_space = true;
-                }
-
-                self.ignoring_space = true;
-                self.last_space = false;
-                self.last_new_line = false;
-            } else if self.in_starting_tagging {
-                self.in_starting_tagging = false;
-
-                if c == '>' {
-                    self.is_tagging = false;
-                    self.is_just_finish_tagging = true;
-                } else if c == '/' {
-                    self.is_start_tagging = false;
-
-                    self.in_end_tagging = true;
-
-                    self.end_tag.clear();
-                } else {
-                    if c == '!' {
-                        // It may be a comment.
-                        self.tag_counter = 1;
-                    } else {
-                        self.tag_counter = 0;
-                    }
-
-                    self.ignoring_space = false;
-                    self.in_start_tagging = true;
-
-                    self.start_tag.clear();
-                    self.start_tag.push(c);
-                }
-            } else if self.in_start_tagging {
-                if c == '>' {
-                    self.in_start_tagging = false;
-
-                    self.is_tagging = false;
-                    self.is_just_finish_tagging = true;
-
-                    into_tag!(self);
-                } else if c == '/' {
-                    self.in_start_tagging = false;
-                } else {
-                    if self.tag_counter > 0 {
-                        if c == '-' {
-                            self.tag_counter += 1;
-                        }
-
-                        if self.tag_counter == 3 {
-                            self.in_start_tagging = false;
-                            self.is_tagging = false;
-                            self.is_comment = true;
-                            self.tag_counter = 0;
-
-                            if self.remove_comments {
-                                let len = self.out.len();
-
-                                if self.comment_last_space {
-                                    unsafe {
-                                        self.out.set_len(len - 4);
-                                    }
-                                } else {
-                                    unsafe {
-                                        self.out.set_len(len - 3);
-                                    }
-                                }
-                            } else {
-                                self.out.push(c);
-                            }
-
-                            continue;
-                        }
-                    }
-
-                    self.start_tag.push(c);
-                }
-            } else if self.in_end_tagging {
-                if c == '>' {
-                    self.in_end_tagging = false;
-
-                    self.is_tagging = false;
-                    self.is_just_finish_tagging = true;
-                } else {
-                    self.end_tag.push(c);
-                }
-
-                self.ignoring_space = false;
-                self.last_space = false;
-                self.last_new_line = false;
-            } else if self.is_tagging {
-                if self.in_attribute {
-                    if c == self.attribute_quote {
-                        let last = *self.out.last().unwrap();
-
-                        if last != '\\' {
-                            self.in_attribute = false;
-
-                            if self.handled_attribute && last == ' ' {
-                                self.out.remove(self.out.len() - 1);
-                            }
-
-                            if self.saved_attribute {
-                                self.attribute_value =
-                                    self.buffer.iter().collect::<String>().to_lowercase();
-                                self.buffer.clear();
-                            }
-                        }
-                    }
-
-                    if self.saved_attribute {
-                        self.buffer.push(c);
-                    }
-
-                    self.ignoring_space = false;
-                } else if c == '>' {
-                    self.is_tagging = false;
-                    self.is_just_finish_tagging = true;
-
-                    if self.is_start_tagging {
-                        into_tag!(self);
-                    }
-                } else if c == '/' {
-                    // do nothing
-                } else if c == '"' || c == '\'' {
-                    self.in_attribute = true;
-
-                    self.attribute_quote = c;
-
-                    match self.attribute.as_str() {
-                        "class" => {
-                            self.handled_attribute = true;
-                            self.ignoring_space = true;
-                        }
-                        "type" => {
-                            self.handled_attribute = true;
-                            self.saved_attribute = true;
-                            self.ignoring_space = true;
-                        }
-                        _ => {
-                            self.handled_attribute = false;
-                            self.saved_attribute = false;
-                        }
-                    }
-                } else if c == '=' {
-                    self.attribute = self.buffer.iter().collect::<String>().to_lowercase();
-                    self.buffer.clear();
-                } else {
-                    if self.last_space {
-                        if let Some(&last) = self.out.last() {
-                            if self.last_new_line {
-                                if !is_cj(last) || !is_cj(c) {
-                                    self.out.push(' ');
-                                }
-                            } else {
-                                self.out.push(' ');
-                            }
-                        }
-                    }
-
-                    self.buffer.push(c);
-                }
-
-                self.last_space = false;
-                self.last_new_line = false;
-            } else {
-                if self.last_space {
-                    if let Some(&last) = self.out.last() {
-                        if self.last_new_line {
-                            if !is_cj(last) || !is_cj(c) {
-                                self.out.push(' ');
-                            }
-                        } else {
-                            self.out.push(' ');
-                        }
-                    }
-                }
-
-                self.ignoring_space = false;
-                self.last_space = false;
-                self.last_new_line = false;
+            }
+            _ => {
+                self.in_handled_attribute = false;
+                self.in_attribute_type = false;
+            }
+        }
+    }
+
+    #[inline]
+    fn finish_buffer(&mut self) {
+        if self.in_attribute_type {
+            if let Cow::Owned(attribute_value) =
+                html_escape::decode_html_entities(unsafe { from_utf8_unchecked(&self.buffer) })
+            {
+                self.buffer = attribute_value.into_bytes();
             }
 
-            self.out.push(c);
+            if let Cow::Owned(attribute_value) =
+                unsafe { from_utf8_unchecked(&self.buffer) }.cow_to_ascii_lowercase()
+            {
+                self.buffer = attribute_value.into_bytes();
+            }
         }
+    }
+
+    #[inline]
+    fn end_start_tag_and_get_next_step(
+        &mut self,
+        text_bytes: &[u8],
+        start: &mut usize,
+        p: usize,
+    ) -> Step {
+        match self.tag.as_slice() {
+            b"script" => {
+                self.step_counter = 0;
+
+                match self.buffer.as_slice() {
+                    b"" | b"application/javascript" => {
+                        self.out.extend_from_slice(&text_bytes[*start..=p]);
+                        *start = p + 1;
+
+                        self.buffer.clear();
+
+                        Step::ScriptJavaScript
+                    }
+                    _ => Step::ScriptDefault,
+                }
+            }
+            b"style" => {
+                self.step_counter = 0;
+
+                match self.buffer.as_slice() {
+                    b"" | b"text/css" => {
+                        self.out.extend_from_slice(&text_bytes[*start..=p]);
+                        *start = p + 1;
+
+                        self.buffer.clear();
+
+                        Step::StyleCSS
+                    }
+                    _ => Step::StyleDefault,
+                }
+            }
+            b"pre" => {
+                self.step_counter = 0;
+                Step::Pre
+            }
+            b"code" => {
+                if self.minify_code {
+                    Step::InitialRemainOneWhitespace
+                } else {
+                    self.step_counter = 0;
+                    Step::Code
+                }
+            }
+            b"textarea" => {
+                self.step_counter = 0;
+                Step::Textarea
+            }
+            _ => Step::InitialRemainOneWhitespace,
+        }
+    }
+}
+
+impl HTMLMinifier {
+    /// Reset this html minifier. The option settings will be be preserved.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.out.clear();
+        self.step = Step::default();
+    }
+
+    /// Input some text to generate HTML code. It is not necessary to input a full HTML text at once.
+    pub fn digest<S: AsRef<str>>(&mut self, text: S) -> Result<(), HTMLMinifierError> {
+        let text = text.as_ref();
+        let text_bytes = text.as_bytes();
+        let text_length = text_bytes.len();
+
+        self.out.reserve(text_length);
+
+        let mut start = 0;
+        let mut p = 0;
+
+        while p < text_length {
+            let e = text_bytes[p];
+
+            let width = unsafe { utf8_width::get_width_assume_valid(e) };
+
+            match width {
+                1 => {
+                    let e = text_bytes[p];
+
+                    if is_ascii_control(e) {
+                        self.out.extend_from_slice(&text_bytes[start..p]);
+                        start = p + 1;
+                    } else {
+                        match self.step {
+                            Step::Initial => {
+                                // ?
+                                match e {
+                                    b'<' => self.step = Step::StartTagInitial,
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            debug_assert_eq!(start, p);
+                                            start = p + 1;
+                                        } else {
+                                            self.last_cj = false;
+                                            self.last_space = 0;
+                                            self.step = Step::InitialRemainOneWhitespace;
+                                        }
+                                    }
+                                }
+                            }
+                            Step::InitialRemainOneWhitespace => {
+                                // a?
+                                if is_whitespace(e) {
+                                    self.out.extend_from_slice(&text_bytes[start..p]);
+                                    start = p + 1;
+
+                                    self.last_space = e;
+
+                                    self.step = Step::InitialIgnoreWhitespace;
+                                } else if e == b'<' {
+                                    self.step = Step::StartTagInitial;
+                                } else {
+                                    self.last_cj = false;
+                                    self.last_space = 0;
+                                }
+                            }
+                            Step::InitialIgnoreWhitespace => {
+                                // a ?
+                                match e {
+                                    b'\n' => {
+                                        debug_assert_eq!(start, p);
+                                        start = p + 1;
+
+                                        self.last_space = b'\n';
+                                    }
+                                    0x09 | 0x0B..=0x0D | 0x1C..=0x20 => {
+                                        debug_assert_eq!(start, p);
+                                        start = p + 1;
+                                    }
+                                    b'<' => {
+                                        if self.last_space > 0 {
+                                            self.out.push(b' ');
+                                        }
+
+                                        self.step = Step::StartTagInitial;
+                                    }
+                                    _ => {
+                                        if self.last_space > 0 {
+                                            self.out.push(b' ');
+                                        }
+
+                                        self.last_cj = false;
+                                        self.last_space = 0;
+                                        self.step = Step::InitialRemainOneWhitespace;
+                                    }
+                                }
+                            }
+                            Step::StartTagInitial => {
+                                // <?
+                                match e {
+                                    b'/' => self.step = Step::EndTagInitial,
+                                    b'!' => {
+                                        // <!
+                                        self.step_counter = 0;
+                                        self.step = Step::Doctype;
+                                    }
+                                    b'>' => {
+                                        // <>
+                                        self.remove(text_bytes, start, p, 1);
+                                        start = p + 1;
+
+                                        self.last_cj = false;
+                                        self.last_space = 0;
+                                        self.step = Step::InitialRemainOneWhitespace;
+                                    }
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            self.out.extend_from_slice(&text_bytes[start..p]);
+                                            start = p + 1;
+
+                                            self.last_space = e;
+
+                                            self.step = Step::InitialIgnoreWhitespace;
+                                        } else {
+                                            self.tag.clear();
+                                            self.tag.push(e.to_ascii_lowercase());
+
+                                            self.step = Step::StartTag;
+                                        }
+                                    }
+                                }
+                            }
+                            Step::EndTagInitial => {
+                                // </?
+                                match e {
+                                    b'>' => {
+                                        // </>
+                                        self.remove(text_bytes, start, p, 2);
+                                        start = p + 1;
+
+                                        self.last_cj = false;
+                                        self.last_space = 0;
+                                        self.step = Step::InitialRemainOneWhitespace;
+                                    }
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            self.out.extend_from_slice(&text_bytes[start..p]);
+                                            start = p + 1;
+
+                                            self.last_space = e;
+
+                                            self.step = Step::InitialIgnoreWhitespace;
+                                        } else {
+                                            self.step = Step::EndTag;
+                                        }
+                                    }
+                                }
+                            }
+                            Step::StartTag => {
+                                // <a?
+                                if is_whitespace(e) {
+                                    self.out.extend_from_slice(&text_bytes[start..p]);
+                                    start = p + 1;
+
+                                    self.step = Step::StartTagIn;
+                                } else {
+                                    match e {
+                                        b'/' => self.step = Step::TagEnd,
+                                        b'>' => {
+                                            self.step = self.end_start_tag_and_get_next_step(
+                                                text_bytes, &mut start, p,
+                                            )
+                                        }
+                                        _ => self.tag.push(e.to_ascii_lowercase()),
+                                    }
+                                }
+                            }
+                            Step::StartTagIn => {
+                                // <a ?
+                                match e {
+                                    b'/' => self.step = Step::TagEnd,
+                                    b'>' => {
+                                        self.step = self.end_start_tag_and_get_next_step(
+                                            text_bytes, &mut start, p,
+                                        )
+                                    }
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            debug_assert_eq!(start, p);
+                                            start = p + 1;
+                                        } else {
+                                            self.out.push(b' ');
+
+                                            self.attribute_name.clear();
+                                            self.attribute_name.push(e.to_ascii_lowercase());
+
+                                            self.step = Step::StartTagAttributeName;
+                                        }
+                                    }
+                                }
+                            }
+                            Step::StartTagAttributeName => {
+                                // <a a?
+                                match e {
+                                    b'/' => self.step = Step::TagEnd,
+                                    b'>' => {
+                                        self.step = self.end_start_tag_and_get_next_step(
+                                            text_bytes, &mut start, p,
+                                        )
+                                    }
+                                    b'=' => {
+                                        self.set_flags_by_attribute();
+
+                                        self.step = Step::StartTagAttributeValueInitial;
+                                    }
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            self.out.extend_from_slice(&text_bytes[start..p]);
+                                            start = p + 1;
+
+                                            self.step = Step::StartTagAttributeNameWaitingValue;
+                                        } else {
+                                            self.attribute_name.push(e.to_ascii_lowercase());
+                                        }
+                                    }
+                                }
+                            }
+                            Step::StartTagAttributeNameWaitingValue => {
+                                // <a a ?
+                                match e {
+                                    b'/' => self.step = Step::TagEnd,
+                                    b'>' => {
+                                        self.step = self.end_start_tag_and_get_next_step(
+                                            text_bytes, &mut start, p,
+                                        )
+                                    }
+                                    b'=' => {
+                                        self.set_flags_by_attribute();
+
+                                        self.step = Step::StartTagAttributeValueInitial;
+                                    }
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            debug_assert_eq!(start, p);
+                                            start = p + 1;
+                                        } else {
+                                            self.out.push(b' ');
+
+                                            self.attribute_name.clear();
+                                            self.attribute_name.push(e.to_ascii_lowercase());
+
+                                            self.step = Step::StartTagAttributeName;
+                                        }
+                                    }
+                                }
+                            }
+                            Step::StartTagAttributeValueInitial => {
+                                // <a a=?
+                                match e {
+                                    b'/' => {
+                                        self.remove(text_bytes, start, p, 1);
+                                        start = p;
+
+                                        self.step = Step::TagEnd;
+                                    }
+                                    b'>' => {
+                                        self.remove(text_bytes, start, p, 1);
+                                        start = p;
+
+                                        self.step = self.end_start_tag_and_get_next_step(
+                                            text_bytes, &mut start, p,
+                                        );
+                                    }
+                                    b'"' | b'\'' => {
+                                        self.quoted_value_spacing = false;
+                                        self.quoted_value_empty = true;
+
+                                        self.quote = e;
+                                        self.step = Step::StartTagQuotedAttributeValue;
+                                    }
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            self.out.extend_from_slice(&text_bytes[start..p]);
+                                            start = p + 1;
+                                        } else {
+                                            if self.in_attribute_type {
+                                                self.buffer.push(e);
+                                            }
+
+                                            self.step = Step::StartTagUnquotedAttributeValue;
+                                        }
+                                    }
+                                }
+                            }
+                            Step::StartTagQuotedAttributeValue => {
+                                // <a a="?
+                                // <a a='?
+                                // NOTE: Backslashes cannot be used for escaping.
+                                if e == self.quote {
+                                    if self.quoted_value_empty {
+                                        self.remove(text_bytes, start, p, 2);
+                                        start = p + 1;
+                                    } else if self.quoted_value_spacing {
+                                        self.remove(text_bytes, start, p, 1);
+                                        start = p;
+
+                                        if self.in_attribute_type {
+                                            unsafe {
+                                                self.buffer.set_len(self.buffer.len() - 1);
+                                            }
+                                        }
+                                    }
+                                    self.finish_buffer();
+
+                                    self.out.extend_from_slice(&text_bytes[start..=p]);
+                                    start = p + 1;
+
+                                    self.step = Step::StartTagIn;
+                                } else {
+                                    if self.in_handled_attribute && is_whitespace(e) {
+                                        if self.quoted_value_empty {
+                                            self.out.extend_from_slice(&text_bytes[start..p]);
+                                            start = p + 1;
+                                        } else {
+                                            if self.quoted_value_spacing {
+                                                debug_assert_eq!(start, p);
+                                                start = p + 1;
+                                            } else {
+                                                self.out.extend_from_slice(&text_bytes[start..p]);
+                                                start = p + 1;
+                                                self.out.push(b' ');
+                                                if self.in_attribute_type {
+                                                    self.buffer.push(b' ');
+                                                }
+
+                                                self.quoted_value_spacing = true;
+                                                self.quoted_value_empty = false;
+                                            }
+                                        }
+                                    } else {
+                                        self.quoted_value_spacing = false;
+                                        self.quoted_value_empty = false;
+
+                                        if self.in_attribute_type {
+                                            self.buffer.push(e);
+                                        }
+                                    }
+                                }
+                            }
+                            Step::StartTagUnquotedAttributeValue => {
+                                // <a a=v?
+                                // <a a=v?
+                                match e {
+                                    b'>' => {
+                                        self.finish_buffer();
+
+                                        self.last_cj = false;
+                                        self.last_space = 0;
+                                        self.step = Step::InitialRemainOneWhitespace;
+                                    }
+                                    _ => {
+                                        if is_whitespace(e) {
+                                            self.finish_buffer();
+
+                                            self.out.extend_from_slice(&text_bytes[start..p]);
+                                            start = p + 1;
+
+                                            self.step = Step::StartTagIn;
+                                        } else if self.in_attribute_type {
+                                            self.buffer.push(e);
+                                        }
+                                    }
+                                }
+                            }
+                            Step::EndTag => {
+                                // </a?
+                                if is_whitespace(e) {
+                                    self.out.extend_from_slice(&text_bytes[start..p]);
+                                    start = p + 1;
+
+                                    self.step = Step::TagEnd;
+                                } else {
+                                    match e {
+                                        b'>' => {
+                                            self.last_cj = false;
+                                            self.last_space = 0;
+                                            self.step = Step::InitialRemainOneWhitespace;
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                            }
+                            Step::TagEnd => {
+                                // <a/?
+                                // </a ?
+                                match e {
+                                    b'>' => {
+                                        self.last_cj = false;
+                                        self.last_space = 0;
+                                        self.step = Step::InitialRemainOneWhitespace;
+                                    }
+                                    _ => {
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p + 1;
+                                    }
+                                }
+                            }
+                            Step::Doctype => {
+                                // <!?
+                                if e == b'>' {
+                                    self.last_cj = false;
+                                    self.last_space = 0;
+                                    self.step = Step::InitialRemainOneWhitespace;
+                                } else {
+                                    match self.step_counter {
+                                        0 => {
+                                            match e {
+                                                b'-' => self.step_counter = 1,
+                                                _ => self.step_counter = 255,
+                                            }
+                                        }
+                                        1 => {
+                                            match e {
+                                                b'-' => {
+                                                    if self.remove_comments {
+                                                        if self.last_space > 0 {
+                                                            //  <!--
+                                                            self.remove(text_bytes, start, p, 4);
+                                                        } else {
+                                                            // <!--
+                                                            self.remove(text_bytes, start, p, 3);
+                                                        }
+                                                    } else {
+                                                        self.out.extend_from_slice(
+                                                            &text_bytes[start..=p],
+                                                        );
+                                                    }
+                                                    start = p + 1;
+
+                                                    self.step_counter = 0;
+                                                    self.step = Step::Comment;
+                                                }
+                                                _ => self.step_counter = 255,
+                                            }
+                                        }
+                                        255 => (),
+                                        _ => unreachable!(),
+                                    }
+                                }
+                            }
+                            Step::Comment => {
+                                // <!--?
+                                if self.remove_comments {
+                                    debug_assert_eq!(start, p);
+                                    start = p + 1;
+                                }
+
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'-' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'-' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b'>' => {
+                                                if self.last_space > 0 {
+                                                    self.step = Step::InitialIgnoreWhitespace;
+                                                } else {
+                                                    // No need to set the `last_cj` and `last_space`.
+                                                    self.step = Step::InitialRemainOneWhitespace;
+                                                }
+                                            }
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Step::ScriptDefault => {
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'<' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'/' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b's' | b'S' => self.step_counter = 3,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    3 => {
+                                        match e {
+                                            b'c' | b'C' => self.step_counter = 4,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    4 => {
+                                        match e {
+                                            b'r' | b'R' => self.step_counter = 5,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    5 => {
+                                        match e {
+                                            b'i' | b'I' => self.step_counter = 6,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    6 => {
+                                        match e {
+                                            b'p' | b'P' => self.step_counter = 7,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    7 => {
+                                        match e {
+                                            b't' | b'T' => self.step_counter = 8,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    8 => {
+                                        match e {
+                                            b'>' => {
+                                                self.last_cj = false;
+                                                self.last_space = 0;
+                                                self.step = Step::InitialRemainOneWhitespace;
+                                            }
+                                            _ => {
+                                                if is_whitespace(e) {
+                                                    self.out
+                                                        .extend_from_slice(&text_bytes[start..p]);
+                                                    start = p + 1;
+
+                                                    self.step = Step::TagEnd;
+                                                } else {
+                                                    self.step_counter = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Step::ScriptJavaScript => {
+                                debug_assert_eq!(start, p);
+                                start = p + 1;
+                                self.buffer.push(e);
+
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'<' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'/' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b's' | b'S' => self.step_counter = 3,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    3 => {
+                                        match e {
+                                            b'c' | b'C' => self.step_counter = 4,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    4 => {
+                                        match e {
+                                            b'r' | b'R' => self.step_counter = 5,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    5 => {
+                                        match e {
+                                            b'i' | b'I' => self.step_counter = 6,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    6 => {
+                                        match e {
+                                            b'p' | b'P' => self.step_counter = 7,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    7 => {
+                                        match e {
+                                            b't' | b'T' => self.step_counter = 8,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    8 => {
+                                        match e {
+                                            b'>' => {
+                                                let script_length = self.buffer.len() - 9;
+
+                                                let minified_js = js::minify(unsafe {
+                                                    from_utf8_unchecked(
+                                                        &self.buffer[..script_length],
+                                                    )
+                                                });
+                                                self.out.extend_from_slice(minified_js.as_bytes());
+                                                self.out.extend_from_slice(
+                                                    &self.buffer[script_length..],
+                                                );
+
+                                                self.last_cj = false;
+                                                self.last_space = 0;
+                                                self.step = Step::InitialRemainOneWhitespace;
+                                            }
+                                            _ => {
+                                                if is_whitespace(e) {
+                                                    let buffer_length = self.buffer.len();
+                                                    let script_length = buffer_length - 9;
+
+                                                    let minified_js = js::minify(unsafe {
+                                                        from_utf8_unchecked(
+                                                            &self.buffer[..script_length],
+                                                        )
+                                                    });
+                                                    self.out
+                                                        .extend_from_slice(minified_js.as_bytes());
+                                                    self.out.extend_from_slice(
+                                                        &self.buffer
+                                                            [script_length..(buffer_length - 1)],
+                                                    );
+
+                                                    self.step = Step::TagEnd;
+                                                } else {
+                                                    self.step_counter = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Step::StyleDefault => {
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'<' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'/' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b's' | b'S' => self.step_counter = 3,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    3 => {
+                                        match e {
+                                            b't' | b'T' => self.step_counter = 4,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    4 => {
+                                        match e {
+                                            b'y' | b'Y' => self.step_counter = 5,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    5 => {
+                                        match e {
+                                            b'l' | b'L' => self.step_counter = 6,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    6 => {
+                                        match e {
+                                            b'e' | b'E' => self.step_counter = 7,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    7 => {
+                                        match e {
+                                            b'>' => {
+                                                self.last_cj = false;
+                                                self.last_space = 0;
+                                                self.step = Step::InitialRemainOneWhitespace;
+                                            }
+                                            _ => {
+                                                if is_whitespace(e) {
+                                                    self.out
+                                                        .extend_from_slice(&text_bytes[start..p]);
+                                                    start = p + 1;
+
+                                                    self.step = Step::TagEnd;
+                                                } else {
+                                                    self.step_counter = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Step::StyleCSS => {
+                                debug_assert_eq!(start, p);
+                                start = p + 1;
+                                self.buffer.push(e);
+
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'<' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'/' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b's' | b'S' => self.step_counter = 3,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    3 => {
+                                        match e {
+                                            b't' | b'T' => self.step_counter = 4,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    4 => {
+                                        match e {
+                                            b'y' | b'Y' => self.step_counter = 5,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    5 => {
+                                        match e {
+                                            b'l' | b'L' => self.step_counter = 6,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    6 => {
+                                        match e {
+                                            b'e' | b'E' => self.step_counter = 7,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    7 => {
+                                        match e {
+                                            b'>' => {
+                                                let script_length = self.buffer.len() - 8;
+
+                                                let minified_css = css::minify(unsafe {
+                                                    from_utf8_unchecked(
+                                                        &self.buffer[..script_length],
+                                                    )
+                                                })
+                                                .map_err(|error| {
+                                                    HTMLMinifierError::CSSError(error)
+                                                })?;
+                                                self.out.extend_from_slice(minified_css.as_bytes());
+                                                self.out.extend_from_slice(
+                                                    &self.buffer[script_length..],
+                                                );
+
+                                                self.last_cj = false;
+                                                self.last_space = 0;
+                                                self.step = Step::InitialRemainOneWhitespace;
+                                            }
+                                            _ => {
+                                                if is_whitespace(e) {
+                                                    let buffer_length = self.buffer.len();
+                                                    let script_length = buffer_length - 8;
+
+                                                    let minified_css = css::minify(unsafe {
+                                                        from_utf8_unchecked(
+                                                            &self.buffer[..script_length],
+                                                        )
+                                                    })
+                                                    .map_err(|error| {
+                                                        HTMLMinifierError::CSSError(error)
+                                                    })?;
+                                                    self.out
+                                                        .extend_from_slice(minified_css.as_bytes());
+                                                    self.out.extend_from_slice(
+                                                        &self.buffer
+                                                            [script_length..(buffer_length - 1)],
+                                                    );
+
+                                                    self.step = Step::TagEnd;
+                                                } else {
+                                                    self.step_counter = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Step::Pre => {
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'<' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'/' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b'p' | b'P' => self.step_counter = 3,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    3 => {
+                                        match e {
+                                            b'r' | b'R' => self.step_counter = 4,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    4 => {
+                                        match e {
+                                            b'e' | b'E' => self.step_counter = 5,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    5 => {
+                                        match e {
+                                            b'>' => {
+                                                self.last_cj = false;
+                                                self.last_space = 0;
+                                                self.step = Step::InitialRemainOneWhitespace;
+                                            }
+                                            _ => {
+                                                if is_whitespace(e) {
+                                                    self.out
+                                                        .extend_from_slice(&text_bytes[start..p]);
+                                                    start = p + 1;
+
+                                                    self.step = Step::TagEnd;
+                                                } else {
+                                                    self.step_counter = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Step::Code => {
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'<' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'/' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b'c' | b'C' => self.step_counter = 3,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    3 => {
+                                        match e {
+                                            b'o' | b'O' => self.step_counter = 4,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    4 => {
+                                        match e {
+                                            b'd' | b'D' => self.step_counter = 5,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    5 => {
+                                        match e {
+                                            b'e' | b'E' => self.step_counter = 6,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    6 => {
+                                        match e {
+                                            b'>' => {
+                                                self.last_cj = false;
+                                                self.last_space = 0;
+                                                self.step = Step::InitialRemainOneWhitespace;
+                                            }
+                                            _ => {
+                                                if is_whitespace(e) {
+                                                    self.out
+                                                        .extend_from_slice(&text_bytes[start..p]);
+                                                    start = p + 1;
+
+                                                    self.step = Step::TagEnd;
+                                                } else {
+                                                    self.step_counter = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Step::Textarea => {
+                                match self.step_counter {
+                                    0 => {
+                                        match e {
+                                            b'<' => self.step_counter = 1,
+                                            _ => (),
+                                        }
+                                    }
+                                    1 => {
+                                        match e {
+                                            b'/' => self.step_counter = 2,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    2 => {
+                                        match e {
+                                            b't' | b'T' => self.step_counter = 3,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    3 => {
+                                        match e {
+                                            b'e' | b'E' => self.step_counter = 4,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    4 => {
+                                        match e {
+                                            b'x' | b'X' => self.step_counter = 5,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    5 => {
+                                        match e {
+                                            b't' | b'T' => self.step_counter = 6,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    6 => {
+                                        match e {
+                                            b'a' | b'A' => self.step_counter = 7,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    7 => {
+                                        match e {
+                                            b'r' | b'R' => self.step_counter = 8,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    8 => {
+                                        match e {
+                                            b'e' | b'E' => self.step_counter = 9,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    9 => {
+                                        match e {
+                                            b'a' | b'A' => self.step_counter = 10,
+                                            _ => self.step_counter = 0,
+                                        }
+                                    }
+                                    10 => {
+                                        match e {
+                                            b'>' => {
+                                                self.last_cj = false;
+                                                self.last_space = 0;
+                                                self.step = Step::InitialRemainOneWhitespace;
+                                            }
+                                            _ => {
+                                                if is_whitespace(e) {
+                                                    self.out
+                                                        .extend_from_slice(&text_bytes[start..p]);
+                                                    start = p + 1;
+
+                                                    self.step = Step::TagEnd;
+                                                } else {
+                                                    self.step_counter = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                    }
+                }
+                2 => {
+                    match self.step {
+                        Step::Initial => {
+                            // ?
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::InitialRemainOneWhitespace => {
+                            // a?
+                            self.last_cj = false;
+                            self.last_space = 0;
+                        }
+                        Step::InitialIgnoreWhitespace => {
+                            // a ?
+                            if self.last_space > 0 {
+                                self.out.push(b' ');
+                            }
+
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::StartTagInitial
+                        | Step::EndTagInitial
+                        | Step::StartTag
+                        | Step::EndTag => {
+                            // <?
+                            // </?
+                            // <a?
+                            // </a?
+                            // To `InitialIgnoreWhitespace`.
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::StartTagIn => {
+                            // <a ?
+                            self.out.push(b' ');
+
+                            self.attribute_name.clear();
+                            self.attribute_name.push(e);
+                            self.attribute_name.push(text_bytes[p + 1]);
+
+                            self.step = Step::StartTagAttributeName;
+                        }
+                        Step::StartTagAttributeName => {
+                            // <a a?
+                            self.attribute_name.push(e);
+                            self.attribute_name.push(text_bytes[p + 1]);
+                        }
+                        Step::StartTagAttributeNameWaitingValue => {
+                            // <a a ?
+                            self.out.push(b' ');
+
+                            self.attribute_name.clear();
+                            self.attribute_name.push(e);
+                            self.attribute_name.push(text_bytes[p + 1]);
+
+                            self.step = Step::StartTagAttributeName;
+                        }
+                        Step::StartTagAttributeValueInitial => {
+                            // <a a=?
+                            if self.in_attribute_type {
+                                self.buffer.push(e);
+                                self.buffer.push(text_bytes[p + 1]);
+                            }
+
+                            self.step = Step::StartTagUnquotedAttributeValue;
+                        }
+                        Step::StartTagQuotedAttributeValue => {
+                            // <a a="?
+                            // <a a='?
+                            self.quoted_value_spacing = false;
+                            self.quoted_value_empty = false;
+
+                            if self.in_attribute_type {
+                                self.buffer.push(e);
+                                self.buffer.push(text_bytes[p + 1]);
+                            }
+                        }
+                        Step::StartTagUnquotedAttributeValue => {
+                            // <a a=v?
+                            // <a a=v?
+                            if self.in_attribute_type {
+                                self.buffer.push(e);
+                                self.buffer.push(text_bytes[p + 1]);
+                            }
+                        }
+                        Step::TagEnd => {
+                            // <a/?
+                            // </a ?
+                            self.out.extend_from_slice(&text_bytes[start..p]);
+                            start = p + 2;
+                        }
+                        Step::Doctype => {
+                            // <!?
+                            self.step_counter = 255;
+                        }
+                        Step::Comment => {
+                            // <!--?
+                            if self.remove_comments {
+                                debug_assert_eq!(start, p);
+                                start = p + 2;
+                            }
+
+                            self.step_counter = 0;
+                        }
+                        Step::ScriptDefault
+                        | Step::StyleDefault
+                        | Step::Pre
+                        | Step::Code
+                        | Step::Textarea => {
+                            self.step_counter = 0;
+                        }
+                        Step::ScriptJavaScript | Step::StyleCSS => {
+                            debug_assert_eq!(start, p);
+                            start = p + 2;
+                            self.buffer.push(e);
+                            self.buffer.push(text_bytes[p + 1]);
+
+                            self.step_counter = 0;
+                        }
+                    }
+                }
+                _ => {
+                    match self.step {
+                        Step::Initial => {
+                            // ?
+                            self.last_cj = is_bytes_cj(&text_bytes[p..(p + width)]);
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::InitialRemainOneWhitespace => {
+                            // a?
+                            self.last_cj = is_bytes_cj(&text_bytes[p..(p + width)]);
+                            self.last_space = 0;
+                        }
+                        Step::InitialIgnoreWhitespace => {
+                            // a ?
+                            let cj = is_bytes_cj(&text_bytes[p..(p + width)]);
+
+                            if self.last_space > 0
+                                && (self.last_space != b'\n' || !(cj && self.last_cj))
+                            {
+                                self.out.push(b' ');
+                            }
+
+                            self.last_cj = cj;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::StartTagInitial
+                        | Step::EndTagInitial
+                        | Step::StartTag
+                        | Step::EndTag => {
+                            // <?
+                            // </?
+                            // <a?
+                            // </a?
+                            // To `InitialIgnoreWhitespace`.
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::StartTagIn => {
+                            // <a ?
+                            self.out.push(b' ');
+
+                            self.attribute_name.clear();
+                            self.attribute_name.extend_from_slice(&text_bytes[p..(p + width)]);
+
+                            self.step = Step::StartTagAttributeName;
+                        }
+                        Step::StartTagAttributeName => {
+                            // <a a?
+                            self.attribute_name.extend_from_slice(&text_bytes[p..(p + width)]);
+                        }
+                        Step::StartTagAttributeNameWaitingValue => {
+                            // <a a ?
+                            self.out.push(b' ');
+
+                            self.attribute_name.clear();
+                            self.attribute_name.extend_from_slice(&text_bytes[p..(p + width)]);
+
+                            self.step = Step::StartTagAttributeName;
+                        }
+                        Step::StartTagAttributeValueInitial => {
+                            // <a a=?
+                            if self.in_attribute_type {
+                                self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
+                            }
+
+                            self.step = Step::StartTagUnquotedAttributeValue;
+                        }
+                        Step::StartTagQuotedAttributeValue => {
+                            // <a a="?
+                            // <a a='?
+                            self.quoted_value_spacing = false;
+                            self.quoted_value_empty = false;
+
+                            if self.in_attribute_type {
+                                self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
+                            }
+                        }
+                        Step::StartTagUnquotedAttributeValue => {
+                            // <a a=v?
+                            // <a a=v?
+                            if self.in_attribute_type {
+                                self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
+                            }
+                        }
+                        Step::TagEnd => {
+                            // <a/?
+                            // </a ?
+                            self.out.extend_from_slice(&text_bytes[start..p]);
+                            start = p + width;
+                        }
+                        Step::Doctype => {
+                            // <!?
+                            self.step_counter = 255;
+                        }
+                        Step::Comment => {
+                            // <!--?
+                            if self.remove_comments {
+                                debug_assert_eq!(start, p);
+                                start = p + width;
+                            }
+
+                            self.step_counter = 0;
+                        }
+                        Step::ScriptDefault
+                        | Step::StyleDefault
+                        | Step::Pre
+                        | Step::Code
+                        | Step::Textarea => {
+                            self.step_counter = 0;
+                        }
+                        Step::ScriptJavaScript | Step::StyleCSS => {
+                            debug_assert_eq!(start, p);
+                            start = p + width;
+                            self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
+
+                            self.step_counter = 0;
+                        }
+                    }
+                }
+            }
+
+            p += width;
+        }
+
+        self.out.extend_from_slice(&text_bytes[start..p]);
 
         Ok(())
     }
 
-    /// Generate HTML code into a `String` instance.
+    /// Get HTML in a string slice.
     #[inline]
-    pub fn get_html(&mut self) -> String {
-        self.out.iter().collect()
-    }
-
-    /// Minify HTML.
-    #[inline]
-    pub fn minify<S: AsRef<str>>(html: S) -> Result<String, &'static str> {
-        let mut minifier = HTMLMinifier::new();
-
-        minifier.digest(html.as_ref())?;
-
-        Ok(minifier.get_html())
+    pub fn get_html(&mut self) -> &str {
+        unsafe { from_utf8_unchecked(self.out.as_slice()) }
     }
 }
 
 /// Minify HTML.
-pub fn minify<S: AsRef<str>>(html: S) -> Result<String, &'static str> {
-    HTMLMinifier::minify(html)
+#[inline]
+pub fn minify<S: AsRef<str>>(html: S) -> Result<String, HTMLMinifierError> {
+    let mut minifier = HTMLMinifier::new();
+
+    minifier.digest(html.as_ref())?;
+
+    Ok(String::from(minifier.get_html()))
 }
