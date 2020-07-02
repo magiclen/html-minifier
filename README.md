@@ -16,8 +16,8 @@ HTML is minified by the following rules:
     * `<pre>`
     * `<textarea>`
     * `<code>` (optionally, minified by default)
-    * `<style>` (if the **type** attribute is unsupported)
-    * `<script>` (if the **type** attribute is unsupported)
+    * `<style>` (if the `type` attribute is unsupported)
+    * `<script>` (if the `type` attribute is unsupported)
 * JS code and CSS code in `<script>` and `<style>` elements are minified by [minifier](https://crates.io/crates/minifier).
 
 The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
