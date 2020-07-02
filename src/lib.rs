@@ -1638,6 +1638,18 @@ impl HTMLMinifier {
         Ok(())
     }
 
+    /// Directly input some text to generate HTML code. The text will just be appended to the output buffer.
+    ///
+    /// # Safety
+    ///
+    /// This method won't check the HTML element boundary which means the states won't be changed even if the context is totally different.
+    ///
+    /// You need to ensure by yourself that the text which is being inserted won't cause this `HTMLMinifier` to be broken.
+    #[inline]
+    pub unsafe fn indigest<S: AsRef<str>>(&mut self, text: S) {
+        self.out.extend_from_slice(text.as_ref().as_bytes());
+    }
+
     /// Get HTML in a string slice.
     #[inline]
     pub fn get_html(&mut self) -> &str {
