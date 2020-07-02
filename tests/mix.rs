@@ -146,6 +146,14 @@ fn remove_useless_whitespaces_from_content() {
     minifier.reset();
 
     {
+        minifier.digest("<a>1</a>\n /\n <a>2</a>").unwrap();
+
+        assert_eq!("<a>1</a> / <a>2</a>", minifier.get_html());
+    }
+
+    minifier.reset();
+
+    {
         minifier.digest("中   文").unwrap();
 
         assert_eq!("中 文", minifier.get_html());
