@@ -342,6 +342,9 @@ impl HTMLMinifier {
             }
             b"code" => {
                 if self.minify_code {
+                    self.last_cj = false;
+                    self.last_space = 0;
+
                     Step::InitialRemainOneWhitespace
                 } else {
                     self.step_counter = 0;
@@ -352,7 +355,12 @@ impl HTMLMinifier {
                 self.step_counter = 0;
                 Step::Textarea
             }
-            _ => Step::InitialRemainOneWhitespace,
+            _ => {
+                self.last_cj = false;
+                self.last_space = 0;
+
+                Step::InitialRemainOneWhitespace
+            }
         }
     }
 }
