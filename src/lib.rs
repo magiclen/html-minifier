@@ -528,11 +528,15 @@ impl HTMLMinifier {
                                     self.out.extend_from_slice(&text_bytes[start..p]);
                                     start = p + 1;
 
+                                    self.buffer.clear(); // the buffer may be used for the `type` attribute
+
                                     self.step = Step::StartTagIn;
                                 } else {
                                     match e {
                                         b'/' => self.step = Step::TagEnd,
                                         b'>' => {
+                                            self.buffer.clear(); // the buffer may be used for the `type` attribute
+
                                             self.step = self.end_start_tag_and_get_next_step(
                                                 text_bytes, &mut start, p,
                                             )

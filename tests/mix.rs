@@ -312,6 +312,35 @@ fn minify_javascript() {
 }
 
 #[test]
+fn minify_javascript_css() {
+    let mut minifier = HTMLMinifier::new();
+
+    {
+        minifier
+            .digest(
+                r#"<script  >
+        alert('1234!')    ;
+
+        </script ><style  >
+h1 {
+    color: blue;
+    font-family: verdana;
+    font-size: 300%;
+}
+p  {
+    color: red;
+    font-family: courier;
+    font-size: 160%;
+}
+        </style >"#,
+            )
+            .unwrap();
+
+        assert_eq!("<script>alert('1234!')</script><style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>", minifier.get_html());
+    }
+}
+
+#[test]
 fn preserve_pre() {
     let mut minifier = HTMLMinifier::new();
 
