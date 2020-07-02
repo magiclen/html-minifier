@@ -917,10 +917,6 @@ impl HTMLMinifier {
                                 }
                             }
                             Step::ScriptJavaScript => {
-                                debug_assert_eq!(start, p);
-                                start = p + 1;
-                                self.buffer.push(e);
-
                                 match self.step_counter {
                                     0 => {
                                         if e == b'<' {
@@ -972,6 +968,10 @@ impl HTMLMinifier {
                                     8 => {
                                         match e {
                                             b'>' => {
+                                                self.buffer
+                                                    .extend_from_slice(&text_bytes[start..=p]);
+                                                start = p + 1;
+
                                                 let script_length = self.buffer.len() - 9;
 
                                                 let minified_js = js::minify(unsafe {
@@ -990,8 +990,12 @@ impl HTMLMinifier {
                                             }
                                             _ => {
                                                 if is_whitespace(e) {
+                                                    self.buffer
+                                                        .extend_from_slice(&text_bytes[start..p]);
+                                                    start = p + 1;
+
                                                     let buffer_length = self.buffer.len();
-                                                    let script_length = buffer_length - 9;
+                                                    let script_length = buffer_length - 8;
 
                                                     let minified_js = js::minify(unsafe {
                                                         from_utf8_unchecked(
@@ -1001,8 +1005,7 @@ impl HTMLMinifier {
                                                     self.out
                                                         .extend_from_slice(minified_js.as_bytes());
                                                     self.out.extend_from_slice(
-                                                        &self.buffer
-                                                            [script_length..(buffer_length - 1)],
+                                                        &self.buffer[script_length..],
                                                     );
 
                                                     self.step = Step::TagEnd;
@@ -1082,10 +1085,6 @@ impl HTMLMinifier {
                                 }
                             }
                             Step::StyleCSS => {
-                                debug_assert_eq!(start, p);
-                                start = p + 1;
-                                self.buffer.push(e);
-
                                 match self.step_counter {
                                     0 => {
                                         if e == b'<' {
@@ -1131,6 +1130,10 @@ impl HTMLMinifier {
                                     7 => {
                                         match e {
                                             b'>' => {
+                                                self.buffer
+                                                    .extend_from_slice(&text_bytes[start..=p]);
+                                                start = p + 1;
+
                                                 let script_length = self.buffer.len() - 8;
 
                                                 let minified_css = css::minify(unsafe {
@@ -1152,8 +1155,12 @@ impl HTMLMinifier {
                                             }
                                             _ => {
                                                 if is_whitespace(e) {
+                                                    self.buffer
+                                                        .extend_from_slice(&text_bytes[start..p]);
+                                                    start = p + 1;
+
                                                     let buffer_length = self.buffer.len();
-                                                    let script_length = buffer_length - 8;
+                                                    let script_length = buffer_length - 7;
 
                                                     let minified_css = css::minify(unsafe {
                                                         from_utf8_unchecked(
@@ -1166,8 +1173,7 @@ impl HTMLMinifier {
                                                     self.out
                                                         .extend_from_slice(minified_css.as_bytes());
                                                     self.out.extend_from_slice(
-                                                        &self.buffer
-                                                            [script_length..(buffer_length - 1)],
+                                                        &self.buffer[script_length..],
                                                     );
 
                                                     self.step = Step::TagEnd;
@@ -1493,15 +1499,9 @@ impl HTMLMinifier {
                         | Step::StyleDefault
                         | Step::Pre
                         | Step::Code
-                        | Step::Textarea => {
-                            self.step_counter = 0;
-                        }
-                        Step::ScriptJavaScript | Step::StyleCSS => {
-                            debug_assert_eq!(start, p);
-                            start = p + 2;
-                            self.buffer.push(e);
-                            self.buffer.push(text_bytes[p + 1]);
-
+                        | Step::Textarea
+                        | Step::ScriptJavaScript
+                        | Step::StyleCSS => {
                             self.step_counter = 0;
                         }
                     }
@@ -1616,14 +1616,9 @@ impl HTMLMinifier {
                         | Step::StyleDefault
                         | Step::Pre
                         | Step::Code
-                        | Step::Textarea => {
-                            self.step_counter = 0;
-                        }
-                        Step::ScriptJavaScript | Step::StyleCSS => {
-                            debug_assert_eq!(start, p);
-                            start = p + width;
-                            self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
-
+                        | Step::Textarea
+                        | Step::ScriptJavaScript
+                        | Step::StyleCSS => {
                             self.step_counter = 0;
                         }
                     }
@@ -1633,7 +1628,12 @@ impl HTMLMinifier {
             p += width;
         }
 
-        self.out.extend_from_slice(&text_bytes[start..p]);
+        match self.step {
+            Step::ScriptJavaScript | Step::StyleCSS => {
+                self.buffer.extend_from_slice(&text_bytes[start..p]);
+            }
+            _ => self.out.extend_from_slice(&text_bytes[start..p]),
+        }
 
         Ok(())
     }
