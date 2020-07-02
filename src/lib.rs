@@ -1645,6 +1645,10 @@ impl HTMLMinifier {
     /// This method won't check the HTML element boundary which means the states won't be changed even if the context is totally different.
     ///
     /// You need to ensure by yourself that the text which is being inserted won't cause this `HTMLMinifier` to be broken.
+    ///
+    /// # When to Use This?
+    ///
+    /// If the text has been minified, you can consider to use this method to get a better performance.
     #[inline]
     pub unsafe fn indigest<S: AsRef<str>>(&mut self, text: S) {
         self.out.extend_from_slice(text.as_ref().as_bytes());
