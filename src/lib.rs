@@ -530,6 +530,7 @@ impl HTMLMinifier {
 
                                     self.buffer.clear(); // the buffer may be used for the `type` attribute
 
+                                    self.last_space = 0;
                                     self.step = Step::StartTagIn;
                                 } else {
                                     match e {
@@ -548,7 +549,13 @@ impl HTMLMinifier {
                             Step::StartTagIn => {
                                 // <a ?
                                 match e {
-                                    b'/' => self.step = Step::TagEnd,
+                                    b'/' => {
+                                        if self.last_space > 0 {
+                                            self.out.push(b' ');
+                                        }
+
+                                        self.step = Step::TagEnd;
+                                    },
                                     b'>' => {
                                         self.step = self.end_start_tag_and_get_next_step(
                                             text_bytes, &mut start, p,
@@ -685,6 +692,7 @@ impl HTMLMinifier {
                                     self.out.extend_from_slice(&text_bytes[start..=p]);
                                     start = p + 1;
 
+                                    self.last_space = 0;
                                     self.step = Step::StartTagIn;
                                 } else if self.in_handled_attribute && is_whitespace(e) {
                                     if self.quoted_value_empty {
@@ -731,6 +739,7 @@ impl HTMLMinifier {
                                             self.out.extend_from_slice(&text_bytes[start..p]);
                                             start = p + 1;
 
+                                            self.last_space = e;
                                             self.step = Step::StartTagIn;
                                         } else if self.in_attribute_type {
                                             self.buffer.push(e);

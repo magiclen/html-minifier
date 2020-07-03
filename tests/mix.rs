@@ -99,6 +99,14 @@ fn remove_useless_whitespaces_from_tag() {
 
         assert_eq!(r#"<input type="text" value="123   45"/>"#, minifier.get_html());
     }
+
+    minifier.reset();
+
+    {
+        minifier.digest(r#"<input type="text"  value=123  / >"#).unwrap();
+
+        assert_eq!(r#"<input type="text" value=123 />"#, minifier.get_html());
+    }
 }
 
 #[test]
