@@ -196,7 +196,7 @@ fn is_whitespace(e: u8) -> bool {
 #[inline]
 fn is_ascii_control(e: u8) -> bool {
     match e {
-        0..=8 | 17..=31 | 127 => true,
+        0..=8 | 11..=31 | 127 => true,
         _ => false,
     }
 }
