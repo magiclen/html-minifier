@@ -11,7 +11,7 @@ HTML is minified by the following rules:
 * Comments can be optionally removed. (removed by default)
 * **Useless** whitespaces (spaces, tabs and newlines) are removed. (whitespaces between CJ characters are checked)
 * Whitespaces (spaces, tabs and newlines) are converted to `'\x20'`, if possible.
-* Empty attribute values (e.g value="") are removed.
+* Empty attribute values are collapsed. (e.g `<input readonly="">` => `<input readonly>` )
 * The inner HTML of all elements is minified except for the following elements:
     * `<pre>`
     * `<textarea>`
