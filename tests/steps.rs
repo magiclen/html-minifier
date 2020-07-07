@@ -190,7 +190,7 @@ fn start_tag_attribute_value_initial() {
 
 #[test]
 fn start_tag_quoted_attribute_value() {
-    const CASES: [(&str, &str); 9] = [
+    const CASES: [(&str, &str); 10] = [
         ("<aaa abc=\"v", "<aaa abc=\"v"),
         ("<aaa abc='v", "<aaa abc='v"),
         ("<aaa abc='123   456'", "<aaa abc='123   456'"),
@@ -200,6 +200,7 @@ fn start_tag_quoted_attribute_value() {
         ("<script type='123 456'", "<script type='  123   456  '"),
         ("<aaa abc", "<aaa abc=''"),
         ("<aaa class", "<aaa class=''"),
+        ("<aaa class", "<aaa class=' '"),
     ];
 
     test_enabled_all_options(&CASES);
