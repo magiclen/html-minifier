@@ -101,7 +101,6 @@ extern crate utf8_width;
 
 mod errors;
 
-use core::cmp::Ordering;
 use core::fmt::{self, Formatter};
 use core::str::{from_utf8_unchecked, FromStr};
 
@@ -244,19 +243,6 @@ fn is_bytes_cj(bytes: &[u8]) -> bool {
 }
 
 impl HTMLMinifier {
-    #[inline]
-    fn remove(&mut self, text_bytes: &[u8], start: usize, p: usize, count: usize) {
-        let buffer_length = p - start;
-
-        match buffer_length.cmp(&count) {
-            Ordering::Equal => (),
-            Ordering::Greater => self.out.extend_from_slice(&text_bytes[start..(p - count)]),
-            Ordering::Less => unsafe {
-                self.out.set_len(self.out.len() - (count - buffer_length));
-            },
-        }
-    }
-
     #[inline]
     fn set_flags_by_attribute(&mut self) {
         match self.attribute_name.as_slice() {
@@ -706,16 +692,8 @@ impl HTMLMinifier {
                                 if e == self.quote {
                                     if self.quoted_value_empty {
                                         start = p + 1;
-                                    } else if self.quoted_value_spacing {
-                                        self.remove(text_bytes, start, p, 1);
-                                        start = p;
-
-                                        if self.in_attribute_type {
-                                            unsafe {
-                                                self.buffer.set_len(self.buffer.len() - 1);
-                                            }
-                                        }
                                     }
+
                                     self.finish_buffer();
 
                                     self.out.extend_from_slice(&text_bytes[start..=p]);
@@ -732,10 +710,6 @@ impl HTMLMinifier {
                                     } else {
                                         self.out.extend_from_slice(&text_bytes[start..p]);
                                         start = p + 1;
-                                        self.out.push(b' ');
-                                        if self.in_attribute_type {
-                                            self.buffer.push(b' ');
-                                        }
 
                                         self.quoted_value_spacing = true;
                                         self.quoted_value_empty = false;
@@ -746,13 +720,22 @@ impl HTMLMinifier {
 
                                         self.out.push(b'=');
                                         self.out.push(self.quote);
+                                    } else if self.quoted_value_spacing {
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p;
+
+                                        self.out.push(b' ');
+                                    }
+
+                                    if self.in_attribute_type {
+                                        if self.quoted_value_spacing {
+                                            self.buffer.push(b' ');
+                                        }
+
+                                        self.buffer.push(e);
                                     }
 
                                     self.quoted_value_spacing = false;
-
-                                    if self.in_attribute_type {
-                                        self.buffer.push(e);
-                                    }
                                 }
                             }
                             Step::StartTagUnquotedAttributeValue => {
