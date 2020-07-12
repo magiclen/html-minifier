@@ -611,6 +611,9 @@ impl HTMLMinifier {
                                         )
                                     }
                                     b'=' => {
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p + 1;
+
                                         self.set_flags_by_attribute();
 
                                         self.step = Step::StartTagAttributeValueInitial;
@@ -637,6 +640,9 @@ impl HTMLMinifier {
                                         )
                                     }
                                     b'=' => {
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p + 1;
+
                                         self.set_flags_by_attribute();
 
                                         self.step = Step::StartTagAttributeValueInitial;
@@ -658,17 +664,13 @@ impl HTMLMinifier {
                             }
                             Step::StartTagAttributeValueInitial => {
                                 // <a a=?
+                                debug_assert_eq!(start, p);
+
                                 match e {
                                     b'/' => {
-                                        self.remove(text_bytes, start, p, 1);
-                                        start = p;
-
                                         self.step = Step::TagEnd;
                                     }
                                     b'>' => {
-                                        self.remove(text_bytes, start, p, 1);
-                                        start = p;
-
                                         self.step = self.end_start_tag_and_get_next_step(
                                             text_bytes, &mut start, p,
                                         );
@@ -677,17 +679,20 @@ impl HTMLMinifier {
                                         self.quoted_value_spacing = false;
                                         self.quoted_value_empty = true;
 
+                                        start = p + 1;
+
                                         self.quote = e;
                                         self.step = Step::StartTagQuotedAttributeValue;
                                     }
                                     _ => {
                                         if is_whitespace(e) {
-                                            self.out.extend_from_slice(&text_bytes[start..p]);
                                             start = p + 1;
                                         } else {
                                             if self.in_attribute_type {
                                                 self.buffer.push(e);
                                             }
+
+                                            self.out.push(b'=');
 
                                             self.step = Step::StartTagUnquotedAttributeValue;
                                         }
@@ -700,7 +705,6 @@ impl HTMLMinifier {
                                 // NOTE: Backslashes cannot be used for escaping.
                                 if e == self.quote {
                                     if self.quoted_value_empty {
-                                        self.remove(text_bytes, start, p, 2);
                                         start = p + 1;
                                     } else if self.quoted_value_spacing {
                                         self.remove(text_bytes, start, p, 1);
@@ -721,7 +725,6 @@ impl HTMLMinifier {
                                     self.step = Step::StartTagIn;
                                 } else if self.in_handled_attribute && is_whitespace(e) {
                                     if self.quoted_value_empty {
-                                        self.out.extend_from_slice(&text_bytes[start..p]);
                                         start = p + 1;
                                     } else if self.quoted_value_spacing {
                                         debug_assert_eq!(start, p);
@@ -738,8 +741,14 @@ impl HTMLMinifier {
                                         self.quoted_value_empty = false;
                                     }
                                 } else {
+                                    if self.quoted_value_empty {
+                                        self.quoted_value_empty = false;
+
+                                        self.out.push(b'=');
+                                        self.out.push(self.quote);
+                                    }
+
                                     self.quoted_value_spacing = false;
-                                    self.quoted_value_empty = false;
 
                                     if self.in_attribute_type {
                                         self.buffer.push(e);
@@ -1458,6 +1467,8 @@ impl HTMLMinifier {
                         Step::StartTagInitial => {
                             // <?
                             // To `InitialRemainOneWhitespace`.
+                            debug_assert_eq!(start, p);
+
                             self.out.push(b'<');
 
                             self.last_cj = false;
@@ -1509,18 +1520,28 @@ impl HTMLMinifier {
                         }
                         Step::StartTagAttributeValueInitial => {
                             // <a a=?
+                            debug_assert_eq!(start, p);
+
                             if self.in_attribute_type {
                                 self.buffer.push(e);
                                 self.buffer.push(text_bytes[p + 1]);
                             }
+
+                            self.out.push(b'=');
 
                             self.step = Step::StartTagUnquotedAttributeValue;
                         }
                         Step::StartTagQuotedAttributeValue => {
                             // <a a="?
                             // <a a='?
+                            if self.quoted_value_empty {
+                                self.quoted_value_empty = false;
+
+                                self.out.push(b'=');
+                                self.out.push(self.quote);
+                            }
+
                             self.quoted_value_spacing = false;
-                            self.quoted_value_empty = false;
 
                             if self.in_attribute_type {
                                 self.buffer.push(e);
@@ -1600,6 +1621,8 @@ impl HTMLMinifier {
                         Step::StartTagInitial => {
                             // <?
                             // To `InitialRemainOneWhitespace`.
+                            debug_assert_eq!(start, p);
+
                             self.out.push(b'<');
 
                             self.last_cj = false;
@@ -1648,17 +1671,27 @@ impl HTMLMinifier {
                         }
                         Step::StartTagAttributeValueInitial => {
                             // <a a=?
+                            debug_assert_eq!(start, p);
+
                             if self.in_attribute_type {
                                 self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
                             }
+
+                            self.out.push(b'=');
 
                             self.step = Step::StartTagUnquotedAttributeValue;
                         }
                         Step::StartTagQuotedAttributeValue => {
                             // <a a="?
                             // <a a='?
+                            if self.quoted_value_empty {
+                                self.quoted_value_empty = false;
+
+                                self.out.push(b'=');
+                                self.out.push(self.quote);
+                            }
+
                             self.quoted_value_spacing = false;
-                            self.quoted_value_empty = false;
 
                             if self.in_attribute_type {
                                 self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);

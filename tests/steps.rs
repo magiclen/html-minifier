@@ -152,7 +152,7 @@ fn start_tag_attribute_name() {
         ("<aaa abc", "<aaa abc"),
         ("<aaa abc/", "<aaa abc/"),
         ("<aaa abc>", "<aaa abc>"),
-        ("<aaa abc=", "<aaa abc="),
+        ("<aaa abc", "<aaa abc="),
         ("<aaa abc", "<aaa abc "),
     ];
 
@@ -166,8 +166,8 @@ fn start_tag_attribute_name_waiting_value() {
         ("<aaa abc/", "<aaa abc   /"),
         ("<aaa abc>", "<aaa abc >"),
         ("<aaa abc>", "<aaa abc   >"),
-        ("<aaa abc=", "<aaa abc ="),
-        ("<aaa abc=", "<aaa abc   ="),
+        ("<aaa abc", "<aaa abc ="),
+        ("<aaa abc", "<aaa abc   ="),
     ];
 
     test_enabled_all_options(&CASES);
@@ -178,10 +178,10 @@ fn start_tag_attribute_value_initial() {
     const CASES: [(&str, &str); 7] = [
         ("<aaa abc/", "<aaa abc=/"),
         ("<aaa abc>", "<aaa abc=>"),
-        ("<aaa abc=\"", "<aaa abc=\""),
-        ("<aaa abc='", "<aaa abc='"),
-        ("<aaa abc='", "<aaa abc= '"),
-        ("<aaa abc=", "<aaa abc= "),
+        ("<aaa abc", "<aaa abc=\""),
+        ("<aaa abc", "<aaa abc='"),
+        ("<aaa abc", "<aaa abc= '"),
+        ("<aaa abc", "<aaa abc= "),
         ("<aaa abc=v", "<aaa abc=v"),
     ];
 
