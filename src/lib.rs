@@ -162,11 +162,11 @@ pub struct HTMLMinifier {
     #[educe(Debug(method = "str_bytes_fmt"))]
     out: Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
+    buffer: Vec<u8>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
     tag: Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    attribute_name: Vec<u8>,
-    #[educe(Debug(method = "str_bytes_fmt"))]
-    buffer: Vec<u8>,
+    attribute_type: Vec<u8>,
 
     // Steps
     step: Step,
@@ -245,7 +245,7 @@ fn is_bytes_cj(bytes: &[u8]) -> bool {
 impl HTMLMinifier {
     #[inline]
     fn set_flags_by_attribute(&mut self) {
-        match self.attribute_name.as_slice() {
+        match self.buffer.as_slice() {
             b"class" => {
                 self.in_handled_attribute = true;
                 self.in_attribute_type = false;
@@ -270,16 +270,16 @@ impl HTMLMinifier {
     #[inline]
     fn finish_buffer(&mut self) {
         if self.in_attribute_type {
-            if let Cow::Owned(attribute_value) =
-                html_escape::decode_html_entities(unsafe { from_utf8_unchecked(&self.buffer) })
-            {
-                self.buffer = attribute_value.into_bytes();
+            if let Cow::Owned(attribute_value) = html_escape::decode_html_entities(unsafe {
+                from_utf8_unchecked(&self.attribute_type)
+            }) {
+                self.attribute_type = attribute_value.into_bytes();
             }
 
             if let Cow::Owned(attribute_value) =
-                unsafe { from_utf8_unchecked(&self.buffer) }.cow_to_ascii_lowercase()
+                unsafe { from_utf8_unchecked(&self.attribute_type) }.cow_to_ascii_lowercase()
             {
-                self.buffer = attribute_value.into_bytes();
+                self.attribute_type = attribute_value.into_bytes();
             }
         }
     }
@@ -295,7 +295,7 @@ impl HTMLMinifier {
             b"script" => {
                 self.step_counter = 0;
 
-                match self.buffer.as_slice() {
+                match self.attribute_type.as_slice() {
                     b"" | b"application/javascript" => {
                         self.out.extend_from_slice(&text_bytes[*start..=p]);
                         *start = p + 1;
@@ -310,7 +310,7 @@ impl HTMLMinifier {
             b"style" => {
                 self.step_counter = 0;
 
-                match self.buffer.as_slice() {
+                match self.attribute_type.as_slice() {
                     b"" | b"text/css" => {
                         self.out.extend_from_slice(&text_bytes[*start..=p]);
                         *start = p + 1;
@@ -579,8 +579,8 @@ impl HTMLMinifier {
                                         } else {
                                             self.out.push(b' ');
 
-                                            self.attribute_name.clear();
-                                            self.attribute_name.push(e.to_ascii_lowercase());
+                                            self.buffer.clear();
+                                            self.buffer.push(e.to_ascii_lowercase());
 
                                             self.step = Step::StartTagAttributeName;
                                         }
@@ -611,7 +611,7 @@ impl HTMLMinifier {
 
                                             self.step = Step::StartTagAttributeNameWaitingValue;
                                         } else {
-                                            self.attribute_name.push(e.to_ascii_lowercase());
+                                            self.buffer.push(e.to_ascii_lowercase());
                                         }
                                     }
                                 }
@@ -640,8 +640,8 @@ impl HTMLMinifier {
                                         } else {
                                             self.out.push(b' ');
 
-                                            self.attribute_name.clear();
-                                            self.attribute_name.push(e.to_ascii_lowercase());
+                                            self.buffer.clear();
+                                            self.buffer.push(e.to_ascii_lowercase());
 
                                             self.step = Step::StartTagAttributeName;
                                         }
@@ -675,7 +675,7 @@ impl HTMLMinifier {
                                             start = p + 1;
                                         } else {
                                             if self.in_attribute_type {
-                                                self.buffer.push(e);
+                                                self.attribute_type.push(e);
                                             }
 
                                             self.out.push(b'=');
@@ -729,10 +729,10 @@ impl HTMLMinifier {
 
                                     if self.in_attribute_type {
                                         if self.quoted_value_spacing {
-                                            self.buffer.push(b' ');
+                                            self.attribute_type.push(b' ');
                                         }
 
-                                        self.buffer.push(e);
+                                        self.attribute_type.push(e);
                                     }
 
                                     self.quoted_value_spacing = false;
@@ -759,7 +759,7 @@ impl HTMLMinifier {
                                             self.last_space = e;
                                             self.step = Step::StartTagIn;
                                         } else if self.in_attribute_type {
-                                            self.buffer.push(e);
+                                            self.attribute_type.push(e);
                                         }
                                     }
                                 }
@@ -1480,24 +1480,24 @@ impl HTMLMinifier {
                             // <a ?
                             self.out.push(b' ');
 
-                            self.attribute_name.clear();
-                            self.attribute_name.push(e);
-                            self.attribute_name.push(text_bytes[p + 1]);
+                            self.buffer.clear();
+                            self.buffer.push(e);
+                            self.buffer.push(text_bytes[p + 1]);
 
                             self.step = Step::StartTagAttributeName;
                         }
                         Step::StartTagAttributeName => {
                             // <a a?
-                            self.attribute_name.push(e);
-                            self.attribute_name.push(text_bytes[p + 1]);
+                            self.buffer.push(e);
+                            self.buffer.push(text_bytes[p + 1]);
                         }
                         Step::StartTagAttributeNameWaitingValue => {
                             // <a a ?
                             self.out.push(b' ');
 
-                            self.attribute_name.clear();
-                            self.attribute_name.push(e);
-                            self.attribute_name.push(text_bytes[p + 1]);
+                            self.buffer.clear();
+                            self.buffer.push(e);
+                            self.buffer.push(text_bytes[p + 1]);
 
                             self.step = Step::StartTagAttributeName;
                         }
@@ -1506,8 +1506,8 @@ impl HTMLMinifier {
                             debug_assert_eq!(start, p);
 
                             if self.in_attribute_type {
-                                self.buffer.push(e);
-                                self.buffer.push(text_bytes[p + 1]);
+                                self.attribute_type.push(e);
+                                self.attribute_type.push(text_bytes[p + 1]);
                             }
 
                             self.out.push(b'=');
@@ -1527,16 +1527,16 @@ impl HTMLMinifier {
                             self.quoted_value_spacing = false;
 
                             if self.in_attribute_type {
-                                self.buffer.push(e);
-                                self.buffer.push(text_bytes[p + 1]);
+                                self.attribute_type.push(e);
+                                self.attribute_type.push(text_bytes[p + 1]);
                             }
                         }
                         Step::StartTagUnquotedAttributeValue => {
                             // <a a=v?
                             // <a a=v?
                             if self.in_attribute_type {
-                                self.buffer.push(e);
-                                self.buffer.push(text_bytes[p + 1]);
+                                self.attribute_type.push(e);
+                                self.attribute_type.push(text_bytes[p + 1]);
                             }
                         }
                         Step::TagEnd => {
@@ -1634,21 +1634,21 @@ impl HTMLMinifier {
                             // <a ?
                             self.out.push(b' ');
 
-                            self.attribute_name.clear();
-                            self.attribute_name.extend_from_slice(&text_bytes[p..(p + width)]);
+                            self.buffer.clear();
+                            self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
 
                             self.step = Step::StartTagAttributeName;
                         }
                         Step::StartTagAttributeName => {
                             // <a a?
-                            self.attribute_name.extend_from_slice(&text_bytes[p..(p + width)]);
+                            self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
                         }
                         Step::StartTagAttributeNameWaitingValue => {
                             // <a a ?
                             self.out.push(b' ');
 
-                            self.attribute_name.clear();
-                            self.attribute_name.extend_from_slice(&text_bytes[p..(p + width)]);
+                            self.buffer.clear();
+                            self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
 
                             self.step = Step::StartTagAttributeName;
                         }
@@ -1657,7 +1657,7 @@ impl HTMLMinifier {
                             debug_assert_eq!(start, p);
 
                             if self.in_attribute_type {
-                                self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
+                                self.attribute_type.extend_from_slice(&text_bytes[p..(p + width)]);
                             }
 
                             self.out.push(b'=');
@@ -1677,14 +1677,14 @@ impl HTMLMinifier {
                             self.quoted_value_spacing = false;
 
                             if self.in_attribute_type {
-                                self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
+                                self.attribute_type.extend_from_slice(&text_bytes[p..(p + width)]);
                             }
                         }
                         Step::StartTagUnquotedAttributeValue => {
                             // <a a=v?
                             // <a a=v?
                             if self.in_attribute_type {
-                                self.buffer.extend_from_slice(&text_bytes[p..(p + width)]);
+                                self.attribute_type.extend_from_slice(&text_bytes[p..(p + width)]);
                             }
                         }
                         Step::TagEnd => {
