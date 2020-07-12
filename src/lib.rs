@@ -445,7 +445,9 @@ impl HTMLMinifier {
                                         debug_assert_eq!(start, p);
                                         start = p + 1;
 
-                                        self.last_space = b'\n';
+                                        if self.last_space > 0 {
+                                            self.last_space = b'\n';
+                                        }
                                     }
                                     0x09 | 0x0B..=0x0D | 0x1C..=0x20 => {
                                         debug_assert_eq!(start, p);
@@ -484,7 +486,7 @@ impl HTMLMinifier {
                                     }
                                     b'!' => {
                                         // <!
-                                        self.out.push(b'<');
+                                        start = p + 1;
 
                                         self.step_counter = 0;
                                         self.step = Step::Doctype;
@@ -801,6 +803,11 @@ impl HTMLMinifier {
                             Step::Doctype => {
                                 // <!?
                                 if e == b'>' {
+                                    if self.step_counter == 0 {
+                                        self.out.push(b'<');
+                                        self.out.push(b'!');
+                                    }
+
                                     self.last_cj = false;
                                     self.last_space = 0;
                                     self.step = Step::InitialRemainOneWhitespace;
@@ -808,32 +815,36 @@ impl HTMLMinifier {
                                     match self.step_counter {
                                         0 => {
                                             match e {
-                                                b'-' => self.step_counter = 1,
-                                                _ => self.step_counter = 255,
+                                                b'-' => {
+                                                    start = p + 1;
+
+                                                    self.step_counter = 1;
+                                                }
+                                                _ => {
+                                                    self.out.push(b'<');
+                                                    self.out.push(b'!');
+
+                                                    self.step_counter = 255;
+                                                }
                                             }
                                         }
                                         1 => {
                                             match e {
                                                 b'-' => {
-                                                    if self.remove_comments {
-                                                        if self.last_space > 0 {
-                                                            //  <!--
-                                                            self.remove(text_bytes, start, p, 4);
-                                                        } else {
-                                                            // <!--
-                                                            self.remove(text_bytes, start, p, 3);
-                                                        }
-                                                    } else {
-                                                        self.out.extend_from_slice(
-                                                            &text_bytes[start..=p],
-                                                        );
+                                                    if !self.remove_comments {
+                                                        self.out.extend_from_slice(b"<!--");
                                                     }
+
                                                     start = p + 1;
 
                                                     self.step_counter = 0;
                                                     self.step = Step::Comment;
                                                 }
-                                                _ => self.step_counter = 255,
+                                                _ => {
+                                                    self.out.extend_from_slice(b"<!-");
+
+                                                    self.step_counter = 255;
+                                                }
                                             }
                                         }
                                         255 => (),
@@ -864,6 +875,8 @@ impl HTMLMinifier {
                                         match e {
                                             b'>' => {
                                                 if self.last_space > 0 {
+                                                    self.last_space = 0;
+
                                                     self.step = Step::InitialIgnoreWhitespace;
                                                 } else {
                                                     // No need to set the `last_cj` and `last_space`.
@@ -1530,6 +1543,11 @@ impl HTMLMinifier {
                         }
                         Step::Doctype => {
                             // <!?
+                            if self.step_counter == 0 {
+                                self.out.push(b'<');
+                                self.out.push(b'!');
+                            }
+
                             self.step_counter = 255;
                         }
                         Step::Comment => {
@@ -1661,6 +1679,11 @@ impl HTMLMinifier {
                         }
                         Step::Doctype => {
                             // <!?
+                            if self.step_counter == 0 {
+                                self.out.push(b'<');
+                                self.out.push(b'!');
+                            }
+
                             self.step_counter = 255;
                         }
                         Step::Comment => {

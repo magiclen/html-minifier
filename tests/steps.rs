@@ -111,7 +111,7 @@ fn initial_ignore_whitespace() {
 #[test]
 fn start_tag_initial() {
     const CASES: [(&str, &str); 6] =
-        [("", "<>"), ("123", "123<>"), ("<a", "<a"), ("<", "< "), ("<", "<\t"), ("<!", "<!")];
+        [("", "<>"), ("123", "123<>"), ("<a", "<a"), ("<", "< "), ("<", "<\t"), ("", "<!")];
 
     test_enabled_all_options(&CASES);
 }
