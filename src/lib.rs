@@ -401,7 +401,12 @@ impl HTMLMinifier {
                             Step::Initial => {
                                 // ?
                                 match e {
-                                    b'<' => self.step = Step::StartTagInitial,
+                                    b'<' => {
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p + 1;
+
+                                        self.step = Step::StartTagInitial;
+                                    }
                                     _ => {
                                         if is_whitespace(e) {
                                             debug_assert_eq!(start, p);
@@ -424,6 +429,9 @@ impl HTMLMinifier {
 
                                     self.step = Step::InitialIgnoreWhitespace;
                                 } else if e == b'<' {
+                                    self.out.extend_from_slice(&text_bytes[start..p]);
+                                    start = p + 1;
+
                                     self.step = Step::StartTagInitial;
                                 } else {
                                     self.last_cj = false;
@@ -448,6 +456,9 @@ impl HTMLMinifier {
                                             self.out.push(b' ');
                                         }
 
+                                        self.out.extend_from_slice(&text_bytes[start..p]);
+                                        start = p + 1;
+
                                         self.step = Step::StartTagInitial;
                                     }
                                     _ => {
@@ -462,17 +473,24 @@ impl HTMLMinifier {
                                 }
                             }
                             Step::StartTagInitial => {
+                                debug_assert_eq!(start, p);
+
                                 // <?
                                 match e {
-                                    b'/' => self.step = Step::EndTagInitial,
+                                    b'/' => {
+                                        start = p + 1;
+
+                                        self.step = Step::EndTagInitial;
+                                    }
                                     b'!' => {
                                         // <!
+                                        self.out.push(b'<');
+
                                         self.step_counter = 0;
                                         self.step = Step::Doctype;
                                     }
                                     b'>' => {
                                         // <>
-                                        self.remove(text_bytes, start, p, 1);
                                         start = p + 1;
 
                                         self.last_cj = false;
@@ -481,6 +499,8 @@ impl HTMLMinifier {
                                     }
                                     _ => {
                                         if is_whitespace(e) {
+                                            self.out.push(b'<');
+
                                             self.out.extend_from_slice(&text_bytes[start..p]);
                                             start = p + 1;
 
@@ -488,6 +508,8 @@ impl HTMLMinifier {
 
                                             self.step = Step::InitialIgnoreWhitespace;
                                         } else {
+                                            self.out.push(b'<');
+
                                             self.tag.clear();
                                             self.tag.push(e.to_ascii_lowercase());
 
@@ -501,7 +523,6 @@ impl HTMLMinifier {
                                 match e {
                                     b'>' => {
                                         // </>
-                                        self.remove(text_bytes, start, p, 2);
                                         start = p + 1;
 
                                         self.last_cj = false;
@@ -509,8 +530,10 @@ impl HTMLMinifier {
                                         self.step = Step::InitialRemainOneWhitespace;
                                     }
                                     _ => {
+                                        self.out.push(b'<');
+                                        self.out.push(b'/');
+
                                         if is_whitespace(e) {
-                                            self.out.extend_from_slice(&text_bytes[start..p]);
                                             start = p + 1;
 
                                             self.last_space = e;
@@ -555,7 +578,7 @@ impl HTMLMinifier {
                                         }
 
                                         self.step = Step::TagEnd;
-                                    },
+                                    }
                                     b'>' => {
                                         self.step = self.end_start_tag_and_get_next_step(
                                             text_bytes, &mut start, p,
@@ -1419,12 +1442,26 @@ impl HTMLMinifier {
                             self.last_space = 0;
                             self.step = Step::InitialRemainOneWhitespace;
                         }
-                        Step::StartTagInitial
-                        | Step::EndTagInitial
-                        | Step::StartTag
-                        | Step::EndTag => {
+                        Step::StartTagInitial => {
                             // <?
+                            // To `InitialRemainOneWhitespace`.
+                            self.out.push(b'<');
+
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::EndTagInitial => {
                             // </?
+                            // To `InitialRemainOneWhitespace`.
+                            self.out.push(b'<');
+                            self.out.push(b'/');
+
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::StartTag | Step::EndTag => {
                             // <a?
                             // </a?
                             // To `InitialRemainOneWhitespace`.
@@ -1542,12 +1579,26 @@ impl HTMLMinifier {
                             self.last_space = 0;
                             self.step = Step::InitialRemainOneWhitespace;
                         }
-                        Step::StartTagInitial
-                        | Step::EndTagInitial
-                        | Step::StartTag
-                        | Step::EndTag => {
+                        Step::StartTagInitial => {
                             // <?
+                            // To `InitialRemainOneWhitespace`.
+                            self.out.push(b'<');
+
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::EndTagInitial => {
                             // </?
+                            // To `InitialRemainOneWhitespace`.
+                            self.out.push(b'<');
+                            self.out.push(b'/');
+
+                            self.last_cj = false;
+                            self.last_space = 0;
+                            self.step = Step::InitialRemainOneWhitespace;
+                        }
+                        Step::StartTag | Step::EndTag => {
                             // <a?
                             // </a?
                             // To `InitialRemainOneWhitespace`.
