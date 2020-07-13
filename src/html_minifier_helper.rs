@@ -1366,8 +1366,7 @@ impl HTMLMinifierHelper {
                         Step::Doctype => {
                             // <!?
                             if self.step_counter == 0 {
-                                out.push(b'<')?;
-                                out.push(b'!')?;
+                                out.push_bytes(b"<!")?;
                             }
 
                             self.step_counter = 255;
