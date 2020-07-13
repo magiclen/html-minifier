@@ -8,7 +8,7 @@ fn test_enabled_all_options(cases: &[(&str, &str)]) {
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
         let mut html_minifier = HTMLMinifier::new();
         html_minifier.digest(test).unwrap();
-        assert_eq!(expect, html_minifier.get_html(), "case {}", index);
+        assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case {}", index);
     }
 
     let mut buffer = [0u8; 8];
@@ -20,7 +20,7 @@ fn test_enabled_all_options(cases: &[(&str, &str)]) {
             html_minifier.digest(c.encode_utf8(&mut buffer)).unwrap();
         }
 
-        assert_eq!(expect, html_minifier.get_html(), "case-chunk-1 {}", index);
+        assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case-chunk-1 {}", index);
     }
 
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
@@ -38,7 +38,7 @@ fn test_enabled_all_options(cases: &[(&str, &str)]) {
             html_minifier.digest(unsafe { from_utf8_unchecked(&mut buffer[..length]) }).unwrap();
         }
 
-        assert_eq!(expect, html_minifier.get_html(), "case-chunk-2 {}", index);
+        assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case-chunk-2 {}", index);
     }
 }
 
@@ -49,7 +49,7 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
         html_minifier.set_minify_code(false);
 
         html_minifier.digest(test).unwrap();
-        assert_eq!(expect, html_minifier.get_html(), "case {}", index);
+        assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case {}", index);
     }
 
     let mut buffer = [0u8; 8];
@@ -63,7 +63,7 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
             html_minifier.digest(c.encode_utf8(&mut buffer)).unwrap();
         }
 
-        assert_eq!(expect, html_minifier.get_html(), "case-chunk-1 {}", index);
+        assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case-chunk-1 {}", index);
     }
 
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
@@ -83,7 +83,7 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
             html_minifier.digest(unsafe { from_utf8_unchecked(&mut buffer[..length]) }).unwrap();
         }
 
-        assert_eq!(expect, html_minifier.get_html(), "case-chunk-2 {}", index);
+        assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case-chunk-2 {}", index);
     }
 }
 
@@ -572,15 +572,21 @@ fn width_n_initial_remain_one_whitespace() {
 
 #[test]
 fn width_n_initial_ignore_whitespace() {
-    const CASES: [(&str, &str); 8] = [
+    const CASES: [(&str, &str); 14] = [
         ("中 中中", "中  中中"),
         ("中 中中中 中中中", "中  中中中   中中中"),
-        ("中中", "中\n\t 中"),
-        ("中中", "中 \n\t 中"),
-        ("中 a", "中\n\t a"),
-        ("中 a", "中 \n\t a"),
-        ("a 中", "a\n\t 中"),
-        ("a 中", "a \n\t 中"),
+        ("中\n中", "中\n\t 中"),
+        ("中\n中", "中 \n\t 中"),
+        ("中\na", "中\n\t a"),
+        ("中\na", "中 \n\t a"),
+        ("a\n中", "a\n\t 中"),
+        ("a\n中", "a \n\t 中"),
+        ("中 中", "中\t 中"),
+        ("中 中", "中 \t 中"),
+        ("中 a", "中\t a"),
+        ("中 a", "中 \t a"),
+        ("a 中", "a\t 中"),
+        ("a 中", "a \t 中"),
     ];
 
     test_enabled_all_options(&CASES);

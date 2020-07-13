@@ -7,7 +7,7 @@ HTML is minified by the following rules:
 
 * ASCII control characters (0x00-0x08, 0x11-0x1F, 0x7F) are always removed.
 * Comments can be optionally removed. (removed by default)
-* **Useless** whitespaces (spaces, tabs and newlines) are removed. (whitespaces between CJ characters are checked)
+* **Useless** whitespaces (spaces, tabs and newlines) are removed.
 * Whitespaces (spaces, tabs and newlines) are converted to `'\x20'`, if possible.
 * Empty attribute values are collapsed. (e.g `<input readonly="">` => `<input readonly>` )
 * The inner HTML of all elements is minified except for the following elements:
@@ -19,6 +19,10 @@ HTML is minified by the following rules:
 * JS code and CSS code in `<script>` and `<style>` elements are minified by [minifier](https://crates.io/crates/minifier).
 
 The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
+
+In earier versions, this libaray tried to make HTML inline (e.g. `<a>1</a>\n /\n <a>2</a>` => `<a>1</a> / <a>2</a>`). With this feature, CJ characters need to be checked, otherwise `中\n文` will be minified to `中 文`, which is incorrect.
+
+After version `3.0.0`, this libaray doesn't try to make HTML inline anymore in favor of better performance by removing UTF-8 calculation. Moreover, with this change, it allows the input texts to be encoded not only in ASCII or UTF-8 but also in any other self-synchronizing encoding.
 
 ## Examples
 
@@ -50,7 +54,20 @@ html_minifier.digest("
 ").unwrap();
 html_minifier.digest("</html  >").unwrap();
 
-assert_eq!("<!DOCTYPE html> <html lang=en> <head> <meta name=viewport> </head> <body class='container bg-light'> <input type='text' value='123   456' readonly/> 123456 <b>big</b> 789 ab c 中文字 </body> </html>", html_minifier.get_html());
+assert_eq!("<!DOCTYPE html> <html lang=en>
+<head>
+<meta name=viewport>
+</head>
+<body class='container bg-light'>
+<input type='text' value='123   456' readonly/>
+123456
+<b>big</b> 789
+ab
+c
+中文
+字
+</body>
+</html>".as_bytes(), html_minifier.get_html());
 ```
 
 ```rust
@@ -62,7 +79,7 @@ let mut html_minifier = HTMLMinifier::new();
 
 html_minifier.digest("<pre  >   Hello  world!   </pre  >").unwrap();
 
-assert_eq!("<pre>   Hello  world!   </pre>", html_minifier.get_html());
+assert_eq!(b"<pre>   Hello  world!   </pre>", html_minifier.get_html());
 ```
 
 ```rust
@@ -74,7 +91,7 @@ let mut html_minifier = HTMLMinifier::new();
 
 html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 
-assert_eq!("<script type='application/javascript'>alert('Hello!')</script>", html_minifier.get_html());
+assert_eq!("<script type='application/javascript'>alert('Hello!')</script>".as_bytes(), html_minifier.get_html());
 ```
 
 ## Write HTML to a Writer
@@ -88,31 +105,24 @@ use html_minifier::HTMLMinifierHelper;
 
 # #[cfg(feature = "std")] {
 use std::fs::File;
+use std::io::Read;
 
+let mut input_file = File::open("tests/data/w3schools.com_tryhow_css_example_website.htm").unwrap();
 let mut output_file = File::create("tests/data/index.min.html").unwrap();
+
+let mut buffer = [0u8; 256];
 
 let mut html_minifier_helper = HTMLMinifierHelper::new();
 
-html_minifier_helper.digest("<!DOCTYPE html>   <html  ", &mut output_file).unwrap();
-html_minifier_helper.digest("lang=  en >", &mut output_file).unwrap();
-html_minifier_helper.digest("
-<head>
-    <meta name=viewport>
-</head>
-", &mut output_file).unwrap();
-html_minifier_helper.digest("
-<body class=' container   bg-light '>
-    <input type='text' value='123   456' readonly=''  />
+loop {
+    let c = input_file.read(&mut buffer).unwrap();
 
-    123456
-    <b>big</b> 789
-    ab
-    c
-    中文
-    字
-</body>
-", &mut output_file).unwrap();
-html_minifier_helper.digest("</html  >", &mut output_file).unwrap();
+    if c == 0 {
+        break;
+    }
+
+    html_minifier_helper.digest(&buffer[..c], &mut output_file).unwrap();
+}
 # }
 ```
 
@@ -138,8 +148,6 @@ mod errors;
 mod functions;
 mod html_minifier_helper;
 mod html_writer;
-
-use core::str::from_utf8_unchecked;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -197,7 +205,7 @@ impl HTMLMinifier {
 impl HTMLMinifier {
     /// Input some text to generate HTML code. It is not necessary to input a full HTML text at once.
     #[inline]
-    pub fn digest<S: AsRef<str>>(&mut self, text: S) -> Result<(), HTMLMinifierError> {
+    pub fn digest<S: AsRef<[u8]>>(&mut self, text: S) -> Result<(), HTMLMinifierError> {
         let text = text.as_ref();
 
         self.out.reserve(text.len());
@@ -212,16 +220,16 @@ impl HTMLMinifier {
     /// If the text has been minified, you can consider to use this method to get a better performance.
     #[allow(clippy::missing_safety_doc)]
     #[inline]
-    pub unsafe fn indigest<S: AsRef<str>>(&mut self, text: S) {
-        self.out.extend_from_slice(text.as_ref().as_bytes());
+    pub unsafe fn indigest<S: AsRef<[u8]>>(&mut self, text: S) {
+        self.out.extend_from_slice(text.as_ref());
     }
 }
 
 impl HTMLMinifier {
     /// Get HTML in a string slice.
     #[inline]
-    pub fn get_html(&mut self) -> &str {
-        unsafe { from_utf8_unchecked(self.out.as_slice()) }
+    pub fn get_html(&mut self) -> &[u8] {
+        self.out.as_slice()
     }
 }
 

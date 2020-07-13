@@ -12,7 +12,7 @@ fn reset() {
 
     html_minifier.digest("23").unwrap();
 
-    assert_eq!("23", html_minifier.get_html());
+    assert_eq!(b"23", html_minifier.get_html());
 }
 
 #[test]
@@ -21,7 +21,7 @@ fn remove_ascii_control_characters() {
 
     html_minifier.digest("\x00<html>").unwrap();
 
-    assert_eq!("<html>", html_minifier.get_html());
+    assert_eq!(b"<html>", html_minifier.get_html());
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn remove_useless_whitespaces_from_start() {
 
     html_minifier.digest("  \n \t123").unwrap();
 
-    assert_eq!("123", html_minifier.get_html());
+    assert_eq!(b"123", html_minifier.get_html());
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn remove_useless_whitespaces_from_end() {
 
     html_minifier.digest("123  \n \t").unwrap();
 
-    assert_eq!("123", html_minifier.get_html());
+    assert_eq!(b"123", html_minifier.get_html());
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest("<div  >").unwrap();
 
-        assert_eq!("<div>", html_minifier.get_html());
+        assert_eq!(b"<div>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -57,7 +57,7 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest("</div   >").unwrap();
 
-        assert_eq!("</div>", html_minifier.get_html());
+        assert_eq!(b"</div>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -65,7 +65,7 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest("<hr  /  >").unwrap();
 
-        assert_eq!("<hr/>", html_minifier.get_html());
+        assert_eq!(b"<hr/>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -73,7 +73,10 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest(r#"<div   id="name  xxx"    class="  col-1   col-md-5 ">"#).unwrap();
 
-        assert_eq!(r#"<div id="name  xxx" class="col-1 col-md-5">"#, html_minifier.get_html());
+        assert_eq!(
+            r#"<div id="name  xxx" class="col-1 col-md-5">"#.as_bytes(),
+            html_minifier.get_html()
+        );
     }
 
     html_minifier.reset();
@@ -81,7 +84,7 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest(r#"<div   id="name  xxx"    class="">"#).unwrap();
 
-        assert_eq!(r#"<div id="name  xxx" class>"#, html_minifier.get_html());
+        assert_eq!(r#"<div id="name  xxx" class>"#.as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -89,7 +92,7 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest(r#"<div   id="name  xxx"    class="  ">"#).unwrap();
 
-        assert_eq!(r#"<div id="name  xxx" class>"#, html_minifier.get_html());
+        assert_eq!(r#"<div id="name  xxx" class>"#.as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -97,7 +100,7 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest(r#"<input type="text"  value="123   45"  / >"#).unwrap();
 
-        assert_eq!(r#"<input type="text" value="123   45"/>"#, html_minifier.get_html());
+        assert_eq!(r#"<input type="text" value="123   45"/>"#.as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -105,7 +108,7 @@ fn remove_useless_whitespaces_from_tag() {
     {
         html_minifier.digest(r#"<input type="text"  value=123  / >"#).unwrap();
 
-        assert_eq!(r#"<input type="text" value=123 />"#, html_minifier.get_html());
+        assert_eq!(br#"<input type="text" value=123 />"#.as_ref(), html_minifier.get_html());
     }
 }
 
@@ -116,15 +119,15 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("a   b").unwrap();
 
-        assert_eq!("a b", html_minifier.get_html());
+        assert_eq!(b"a b", html_minifier.get_html());
     }
 
     html_minifier.reset();
 
     {
-        html_minifier.digest("a \n\t\n\n\t\t  b").unwrap();
+        html_minifier.digest("a \t\t\t  b").unwrap();
 
-        assert_eq!("a b", html_minifier.get_html());
+        assert_eq!(b"a b", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -132,7 +135,7 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("a \n b").unwrap();
 
-        assert_eq!("a b", html_minifier.get_html());
+        assert_eq!(b"a\nb", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -140,7 +143,7 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("a\n<span>b</span>").unwrap();
 
-        assert_eq!("a <span>b</span>", html_minifier.get_html());
+        assert_eq!(b"a\n<span>b</span>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -148,7 +151,7 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("<span>a  </span>  <span>  b</span>").unwrap();
 
-        assert_eq!("<span>a </span> <span> b</span>", html_minifier.get_html());
+        assert_eq!(b"<span>a </span> <span> b</span>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -156,7 +159,7 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("<a>1</a>\n /\n <a>2</a>").unwrap();
 
-        assert_eq!("<a>1</a> / <a>2</a>", html_minifier.get_html());
+        assert_eq!(b"<a>1</a>\n/\n<a>2</a>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -164,15 +167,15 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("中   文").unwrap();
 
-        assert_eq!("中 文", html_minifier.get_html());
+        assert_eq!("中 文".as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
 
     {
-        html_minifier.digest("中 \n\t\n\n\t\t  文").unwrap();
+        html_minifier.digest("中 \t\t\t  文").unwrap();
 
-        assert_eq!("中文", html_minifier.get_html());
+        assert_eq!("中 文".as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -180,7 +183,7 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("中 \n 文").unwrap();
 
-        assert_eq!("中文", html_minifier.get_html());
+        assert_eq!("中\n文".as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -188,7 +191,7 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("中\n<span>文</span>").unwrap();
 
-        assert_eq!("中 <span>文</span>", html_minifier.get_html());
+        assert_eq!("中\n<span>文</span>".as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -196,7 +199,7 @@ fn remove_useless_whitespaces_from_content() {
     {
         html_minifier.digest("<span>中  </span>  <span>  文</span>").unwrap();
 
-        assert_eq!("<span>中 </span> <span> 文</span>", html_minifier.get_html());
+        assert_eq!("<span>中 </span> <span> 文</span>".as_bytes(), html_minifier.get_html());
     }
 }
 
@@ -225,7 +228,17 @@ fn text_mix_basic() {
             .unwrap();
 
         assert_eq!(
-            r#"<!DOCTYPE html> <html lang=en> <head> <meta name=viewport> </head> <body class="container bg-light"> <input type="text" value='123   456'/> 123456 <b>big</b> 789 </body> </html>"#,
+            r#"<!DOCTYPE html>
+<html lang=en>
+<head>
+<meta name=viewport>
+</head>
+<body class="container bg-light">
+<input type="text" value='123   456'/>
+123456 <b>big</b> 789
+</body>
+</html>"#
+                .as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -253,7 +266,7 @@ p  {
             )
             .unwrap();
 
-        assert_eq!("<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>", html_minifier.get_html());
+        assert_eq!("<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>".as_bytes(), html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -277,7 +290,7 @@ p  {
             .unwrap();
 
         assert_eq!(
-            r#"<style type="text/css">h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>"#,
+            r#"<style type="text/css">h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>"#.as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -297,7 +310,7 @@ fn minify_javascript() {
             )
             .unwrap();
 
-        assert_eq!("<script>alert('1234!')</script>", html_minifier.get_html());
+        assert_eq!(b"<script>alert('1234!')</script>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -313,7 +326,7 @@ fn minify_javascript() {
             .unwrap();
 
         assert_eq!(
-            r#"<script type="application/javascript">alert('1234!')</script>"#,
+            r#"<script type="application/javascript">alert('1234!')</script>"#.as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -344,7 +357,7 @@ p  {
             )
             .unwrap();
 
-        assert_eq!("<script>alert('1234!')</script><style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>", html_minifier.get_html());
+        assert_eq!("<script>alert('1234!')</script><style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>".as_bytes(), html_minifier.get_html());
     }
 }
 
@@ -372,9 +385,14 @@ fn preserve_pre() {
             r#"<pre lang="html">
     <html>
         1234567
-    </html></pre> <div> 1234567 </div> <pre>
+    </html></pre>
+<div>
+1234567
+</div>
+<pre>
         1234567
-    </pre>"#,
+    </pre>"#
+                .as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -405,9 +423,14 @@ fn preserve_code() {
             r#"<code lang="html">
     <html>
         1234567
-    </html></code> <div> 1234567 </div> <code>
+    </html></code>
+<div>
+1234567
+</div>
+<code>
         1234567
-    </code>"#,
+    </code>"#
+                .as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -439,9 +462,14 @@ You can write multi-line messages here.
 
 This is a textarea.
 You can write multi-line messages here.
-</textarea> <div> 1234567 </div> <textarea>
+</textarea>
+<div>
+1234567
+</div>
+<textarea>
         1234567
-    </textarea>"#,
+    </textarea>"#
+                .as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -465,7 +493,8 @@ fn preserve_unsupported_script_type() {
             r#"<script type="application/ecmascript">
         alert('1234!')    ;
 
-        </script>"#,
+        </script>"#
+                .as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -505,7 +534,8 @@ p  {
     font-family: courier;
     font-size: 160%;
 }
-        </style>"#,
+        </style>"#
+                .as_bytes(),
             html_minifier.get_html()
         );
     }
