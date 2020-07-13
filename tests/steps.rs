@@ -45,8 +45,8 @@ fn test_enabled_all_options(cases: &[(&str, &str)]) {
 fn test_disabled_all_options(cases: &[(&str, &str)]) {
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
         let mut html_minifier = HTMLMinifier::new();
-        html_minifier.remove_comments = false;
-        html_minifier.minify_code = false;
+        html_minifier.set_remove_comments(false);
+        html_minifier.set_minify_code(false);
 
         html_minifier.digest(test).unwrap();
         assert_eq!(expect, html_minifier.get_html(), "case {}", index);
@@ -56,8 +56,8 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
 
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
         let mut html_minifier = HTMLMinifier::new();
-        html_minifier.remove_comments = false;
-        html_minifier.minify_code = false;
+        html_minifier.set_remove_comments(false);
+        html_minifier.set_minify_code(false);
 
         for c in test.chars() {
             html_minifier.digest(c.encode_utf8(&mut buffer)).unwrap();
@@ -68,8 +68,8 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
 
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
         let mut html_minifier = HTMLMinifier::new();
-        html_minifier.remove_comments = false;
-        html_minifier.minify_code = false;
+        html_minifier.set_remove_comments(false);
+        html_minifier.set_minify_code(false);
 
         let mut chars = test.chars();
 

@@ -35,7 +35,7 @@ html_minifier.digest("<!DOCTYPE html>   <html  ").unwrap();
 html_minifier.digest("lang=  en >").unwrap();
 html_minifier.digest("
 <head>
-    <head name=viewport>
+    <meta name=viewport>
 </head>
 ").unwrap();
 html_minifier.digest("
@@ -52,7 +52,7 @@ html_minifier.digest("
 ").unwrap();
 html_minifier.digest("</html  >").unwrap();
 
-assert_eq!("<!DOCTYPE html> <html lang=en> <head> <head name=viewport> </head> <body class='container bg-light'> <input type='text' value='123   456' readonly/> 123456 <b>big</b> 789 ab c 中文字 </body> </html>", html_minifier.get_html());
+assert_eq!("<!DOCTYPE html> <html lang=en> <head> <meta name=viewport> </head> <body class='container bg-light'> <input type='text' value='123   456' readonly/> 123456 <b>big</b> 789 ab c 中文字 </body> </html>", html_minifier.get_html());
 ```
 
 ```rust
@@ -77,6 +77,43 @@ let mut html_minifier = HTMLMinifier::new();
 html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 
 assert_eq!("<script type='application/javascript'>alert('Hello!')</script>", html_minifier.get_html());
+```
+
+## Write HTML to a Writer
+
+If you don't want to store your HTML in memory (e.g. writing to a file instead), you can use the `HTMLMinifierHelper` struct which provides a low-level API that allows you to pass your output instance when invoking the `digest` method.
+
+```rust
+extern crate html_minifier;
+
+use html_minifier::HTMLMinifierHelper;
+
+use std::fs::File;
+
+let mut output_file = File::create("tests/data/index.min.html").unwrap();
+
+let mut html_minifier_helper = HTMLMinifierHelper::new();
+
+html_minifier_helper.digest("<!DOCTYPE html>   <html  ", &mut output_file).unwrap();
+html_minifier_helper.digest("lang=  en >", &mut output_file).unwrap();
+html_minifier_helper.digest("
+<head>
+    <meta name=viewport>
+</head>
+", &mut output_file).unwrap();
+html_minifier_helper.digest("
+<body class=' container   bg-light '>
+    <input type='text' value='123   456' readonly=''  />
+
+    123456
+    <b>big</b> 789
+    ab
+    c
+    中文
+    字
+</body>
+", &mut output_file).unwrap();
+html_minifier_helper.digest("</html  >", &mut output_file).unwrap();
 ```
 
 ## No Std
