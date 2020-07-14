@@ -693,7 +693,7 @@ impl HTMLMinifierHelper {
 
                                                 self.step = Step::InitialIgnoreWhitespace;
                                             } else {
-                                                // No need to set the `last_cj` and `last_space`.
+                                                // No need to set `last_space`.
                                                 self.step = Step::InitialRemainOneWhitespace;
                                             }
                                         }
