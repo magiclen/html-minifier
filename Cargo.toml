@@ -1,6 +1,6 @@
 [package]
 name = "html-minifier"
-version = "3.0.2"
+version = "3.0.3"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2018"
 repository = "https://github.com/magiclen/html-minifier"
@@ -10,7 +10,7 @@ categories = ["no-std", "encoding"]
 description= "This library can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements."
 readme = "README.md"
 license = "MIT"
-include = ["src/**/*", "Cargo.toml"]
+include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
 [badges.travis-ci]
 repository = "magiclen/html-minifier"
