@@ -504,6 +504,7 @@ impl HTMLMinifierHelper {
                                         start = p + 1;
                                     } else {
                                         if self.in_attribute_type {
+                                            self.attribute_type.clear();
                                             self.attribute_type.push(e);
                                         }
 
@@ -1290,6 +1291,7 @@ impl HTMLMinifierHelper {
                         debug_assert_eq!(start, p);
 
                         if self.in_attribute_type {
+                            self.attribute_type.clear();
                             self.attribute_type.push(e);
                         }
 
