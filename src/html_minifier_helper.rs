@@ -138,7 +138,11 @@ impl HTMLMinifierHelper {
 
                         Step::ScriptJavaScript
                     }
-                    _ => Step::ScriptDefault,
+                    _ => {
+                        self.attribute_type.clear();
+
+                        Step::ScriptDefault
+                    },
                 }
             }
             b"style" => {
@@ -154,7 +158,11 @@ impl HTMLMinifierHelper {
 
                         Step::StyleCSS
                     }
-                    _ => Step::StyleDefault,
+                    _ => {
+                        self.attribute_type.clear();
+
+                        Step::StyleDefault
+                    },
                 }
             }
             b"pre" => {
