@@ -88,7 +88,6 @@ impl HTMLMinifierHelper {
                     b"script" | b"style" => {
                         self.in_handled_attribute = true;
                         self.in_attribute_type = true;
-                        self.attribute_type.clear();
                     }
                     _ => (),
                 }
@@ -134,6 +133,7 @@ impl HTMLMinifierHelper {
                         out.push_bytes(&text_bytes[*start..=p])?;
                         *start = p + 1;
 
+                        self.attribute_type.clear();
                         self.buffer.clear();
 
                         Step::ScriptJavaScript
@@ -149,6 +149,7 @@ impl HTMLMinifierHelper {
                         out.push_bytes(&text_bytes[*start..=p])?;
                         *start = p + 1;
 
+                        self.attribute_type.clear();
                         self.buffer.clear();
 
                         Step::StyleCSS
@@ -190,6 +191,8 @@ impl HTMLMinifierHelper {
     #[inline]
     pub fn reset(&mut self) {
         self.step = Step::default();
+
+        self.attribute_type.clear();
     }
 
     /// Input some text to generate HTML code. It is not necessary to input a full HTML text at once.
