@@ -1,1 +1,0 @@
-This folder is for storing the output from test cases. It should be empty, and the folder itself needs to be tracked in Git.
