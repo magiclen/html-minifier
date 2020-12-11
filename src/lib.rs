@@ -20,10 +20,6 @@ HTML is minified by the following rules:
 
 The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
 
-In earier versions, this libaray tried to make HTML inline (e.g. `<a>1</a>\n /\n <a>2</a>` => `<a>1</a> / <a>2</a>`). With this feature, CJ characters need to be checked, otherwise `中\n文` will be minified to `中 文`, which is incorrect.
-
-After version `3.0.0`, this libaray doesn't try to make HTML inline anymore in favor of better performance by removing UTF-8 calculation. Moreover, with this change, it allows the input texts to be encoded not only in ASCII or UTF-8 but also in any other self-synchronizing encoding.
-
 ## Examples
 
 ```rust
