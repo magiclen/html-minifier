@@ -19,7 +19,7 @@ branch = "master"
 [dependencies]
 html-escape = "0.2"
 cow-utils = "0.1"
-minifier = "0.0.36"
+minifier = "0.0.37"
 
 [dependencies.educe]
 version = ">=0.4"
