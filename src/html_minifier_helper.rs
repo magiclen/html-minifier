@@ -142,7 +142,7 @@ impl HTMLMinifierHelper {
                         self.attribute_type.clear();
 
                         Step::ScriptDefault
-                    },
+                    }
                 }
             }
             b"style" => {
@@ -162,7 +162,7 @@ impl HTMLMinifierHelper {
                         self.attribute_type.clear();
 
                         Step::StyleDefault
-                    },
+                    }
                 }
             }
             b"pre" => {
