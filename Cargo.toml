@@ -1,6 +1,6 @@
 [package]
 name = "html-minifier"
-version = "3.0.8"
+version = "3.0.9"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2018"
 repository = "https://github.com/magiclen/html-minifier"
@@ -19,7 +19,7 @@ branch = "master"
 [dependencies]
 html-escape = "0.2"
 cow-utils = "0.1"
-minifier = "0.0.37"
+minifier = "0.0.39"
 
 [dependencies.educe]
 version = ">=0.4"
