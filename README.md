@@ -1,7 +1,7 @@
 HTML Minifier
 ====================
 
-[![Build Status](https://travis-ci.org/magiclen/html-minifier.svg?branch=master)](https://travis-ci.org/magiclen/html-minifier)
+[![CI](https://github.com/magiclen/html-minifier/actions/workflows/ci.yml/badge.svg)](https://github.com/magiclen/html-minifier/actions/workflows/ci.yml)
 
 This library can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements.
 

@@ -1,6 +1,6 @@
 [package]
 name = "html-minifier"
-version = "3.0.9"
+version = "3.0.10"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2018"
 repository = "https://github.com/magiclen/html-minifier"
@@ -11,10 +11,6 @@ description = "This library can help you generate and minify your HTML code at t
 readme = "README.md"
 license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
-
-[badges.travis-ci]
-repository = "magiclen/html-minifier"
-branch = "master"
 
 [dependencies]
 html-escape = "0.2"

@@ -328,9 +328,9 @@ impl HTMLMinifierHelper {
                                     self.step = Step::InitialRemainOneWhitespace;
                                 }
                                 _ => {
-                                    if is_whitespace(e) {
-                                        out.push(b'<')?;
+                                    out.push(b'<')?;
 
+                                    if is_whitespace(e) {
                                         out.push_bytes(&text_bytes[start..p])?;
                                         start = p + 1;
 
@@ -338,8 +338,6 @@ impl HTMLMinifierHelper {
 
                                         self.step = Step::InitialIgnoreWhitespace;
                                     } else {
-                                        out.push(b'<')?;
-
                                         self.tag.clear();
                                         self.tag.push(e.to_ascii_lowercase());
 
