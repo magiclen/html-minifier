@@ -9,15 +9,15 @@ HTML is minified by the following rules:
 
 * ASCII control characters (0x00-0x08, 0x11-0x1F, 0x7F) are always removed.
 * Comments can be optionally removed. (removed by default)
-* **Useless** whitespaces (spaces, tabs and newlines) are removed. (whitespaces between CJ characters are checked)
+* **Useless** whitespaces (spaces, tabs and newlines) are removed.
 * Whitespaces (spaces, tabs and newlines) are converted to a single `'\x20'` or a single '\n', if possible.
 * Empty attribute values are collapsed. (e.g `<input readonly="">` => `<input readonly>` )
 * The inner HTML of all elements is minified except for the following elements:
-    * `<pre>`
-    * `<textarea>`
-    * `<code>` (optionally, minified by default)
-    * `<style>` (if the `type` attribute is unsupported)
-    * `<script>` (if the `type` attribute is unsupported)
+  * `<pre>`
+  * `<textarea>`
+  * `<code>` (optionally, minified by default)
+  * `<style>` (if the `type` attribute is unsupported)
+  * `<script>` (if the `type` attribute is unsupported)
 * JS code and CSS code in `<script>` and `<style>` elements are minified by [minifier](https://crates.io/crates/minifier).
 
 The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
