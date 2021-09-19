@@ -129,7 +129,7 @@ impl HTMLMinifierHelper {
                 self.step_counter = 0;
 
                 match self.attribute_type.as_slice() {
-                    b"" | b"application/javascript" => {
+                    b"" | b"application/javascript" | b"module" => {
                         out.push_bytes(&text_bytes[*start..=p])?;
                         *start = p + 1;
 
