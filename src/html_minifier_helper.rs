@@ -1,6 +1,3 @@
-extern crate cow_utils;
-extern crate minifier;
-
 use core::str::from_utf8_unchecked;
 
 use alloc::borrow::Cow;
@@ -993,7 +990,7 @@ impl HTMLMinifierHelper {
                                             let minified_css = css::minify(unsafe {
                                                 from_utf8_unchecked(&self.buffer[..script_length])
                                             })
-                                            .map_err(|error| HTMLMinifierError::CSSError(error))?;
+                                            .map_err(HTMLMinifierError::CSSError)?;
                                             out.push_bytes(minified_css.as_bytes())?;
                                             out.push_bytes(&self.buffer[script_length..])?;
 

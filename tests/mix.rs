@@ -1,5 +1,3 @@
-extern crate html_minifier;
-
 use html_minifier::HTMLMinifier;
 
 #[test]

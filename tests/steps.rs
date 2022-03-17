@@ -1,5 +1,3 @@
-extern crate html_minifier;
-
 use std::str::from_utf8_unchecked;
 
 use html_minifier::HTMLMinifier;
@@ -35,7 +33,7 @@ fn test_enabled_all_options(cases: &[(&str, &str)]) {
                 length = length + c.encode_utf8(&mut buffer[length..]).len();
             }
 
-            html_minifier.digest(unsafe { from_utf8_unchecked(&mut buffer[..length]) }).unwrap();
+            html_minifier.digest(unsafe { from_utf8_unchecked(&buffer[..length]) }).unwrap();
         }
 
         assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case-chunk-2 {}", index);
@@ -80,7 +78,7 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
                 length = length + c.encode_utf8(&mut buffer[length..]).len();
             }
 
-            html_minifier.digest(unsafe { from_utf8_unchecked(&mut buffer[..length]) }).unwrap();
+            html_minifier.digest(unsafe { from_utf8_unchecked(&buffer[..length]) }).unwrap();
         }
 
         assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case-chunk-2 {}", index);

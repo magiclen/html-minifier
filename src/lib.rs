@@ -23,8 +23,6 @@ The original (non-minified) HTML doesn't need to be completely generated before 
 ## Examples
 
 ```rust
-extern crate html_minifier;
-
 use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
@@ -67,8 +65,6 @@ c
 ```
 
 ```rust
-extern crate html_minifier;
-
 use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
@@ -79,8 +75,6 @@ assert_eq!(b"<pre>   Hello  world!   </pre>", html_minifier.get_html());
 ```
 
 ```rust
-extern crate html_minifier;
-
 use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
@@ -95,8 +89,6 @@ assert_eq!("<script type='application/javascript'>alert('Hello!')</script>".as_b
 If you don't want to store your HTML in memory (e.g. writing to a file instead), you can use the `HTMLMinifierHelper` struct which provides a low-level API that allows you to pass your output instance when invoking the `digest` method.
 
 ```rust
-extern crate html_minifier;
-
 use html_minifier::HTMLMinifierHelper;
 
 # #[cfg(feature = "std")] {
