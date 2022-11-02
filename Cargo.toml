@@ -1,6 +1,6 @@
 [package]
 name = "html-minifier"
-version = "3.0.15"
+version = "3.0.16"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
 repository = "https://github.com/magiclen/html-minifier"
@@ -15,7 +15,7 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 [dependencies]
 html-escape = "0.2"
 cow-utils = "0.1"
-minifier = "0.0.43"
+minifier = "0.2.2"
 
 [dependencies.educe]
 version = ">=0.4"

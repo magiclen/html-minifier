@@ -839,7 +839,7 @@ impl HTMLMinifierHelper {
                                             let minified_js = js::minify(unsafe {
                                                 from_utf8_unchecked(&self.buffer[..script_length])
                                             });
-                                            out.push_bytes(minified_js.as_bytes())?;
+                                            out.push_bytes(minified_js.to_string().as_bytes())?;
                                             out.push_bytes(&self.buffer[script_length..])?;
 
                                             self.last_space = 0;
@@ -859,7 +859,7 @@ impl HTMLMinifierHelper {
                                                         &self.buffer[..script_length],
                                                     )
                                                 });
-                                                out.push_bytes(minified_js.as_bytes())?;
+                                                out.push_bytes(minified_js.to_string().as_bytes())?;
                                                 out.push_bytes(&self.buffer[script_length..])?;
 
                                                 self.step = Step::TagEnd;
@@ -991,7 +991,7 @@ impl HTMLMinifierHelper {
                                                 from_utf8_unchecked(&self.buffer[..script_length])
                                             })
                                             .map_err(HTMLMinifierError::CSSError)?;
-                                            out.push_bytes(minified_css.as_bytes())?;
+                                            out.push_bytes(minified_css.to_string().as_bytes())?;
                                             out.push_bytes(&self.buffer[script_length..])?;
 
                                             self.last_space = 0;
@@ -1014,7 +1014,9 @@ impl HTMLMinifierHelper {
                                                 .map_err(|error| {
                                                     HTMLMinifierError::CSSError(error)
                                                 })?;
-                                                out.push_bytes(minified_css.as_bytes())?;
+                                                out.push_bytes(
+                                                    minified_css.to_string().as_bytes(),
+                                                )?;
                                                 out.push_bytes(&self.buffer[script_length..])?;
 
                                                 self.step = Step::TagEnd;
