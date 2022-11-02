@@ -1,6 +1,7 @@
 use core::str::from_utf8_unchecked;
 
 use alloc::borrow::Cow;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::functions::*;
