@@ -264,7 +264,12 @@ p  {
             )
             .unwrap();
 
-        assert_eq!("<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>".as_bytes(), html_minifier.get_html());
+        assert_eq!(
+            "<style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:\
+             courier;font-size:160%;}</style>"
+                .as_bytes(),
+            html_minifier.get_html()
+        );
     }
 
     html_minifier.reset();
@@ -355,7 +360,12 @@ p  {
             )
             .unwrap();
 
-        assert_eq!("<script>alert('1234!')</script><style>h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>".as_bytes(), html_minifier.get_html());
+        assert_eq!(
+            "<script>alert('1234!')</script><style>h1{color:blue;font-family:verdana;font-size:\
+             300%;}p{color:red;font-family:courier;font-size:160%;}</style>"
+                .as_bytes(),
+            html_minifier.get_html()
+        );
     }
 }
 

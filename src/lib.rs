@@ -137,14 +137,13 @@ mod functions;
 mod html_minifier_helper;
 mod html_writer;
 
-use alloc::string::String;
-use alloc::vec::Vec;
-
-use crate::functions::*;
+use alloc::{string::String, vec::Vec};
 
 pub use errors::*;
 pub use html_minifier_helper::*;
 pub use html_writer::*;
+
+use crate::functions::*;
 
 /// This struct helps you generate and minify your HTML code in the same time. The output destination is inside this struct.
 #[derive(Educe, Clone)]
@@ -152,7 +151,7 @@ pub use html_writer::*;
 pub struct HTMLMinifier {
     helper: HTMLMinifierHelper,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    out: Vec<u8>,
+    out:    Vec<u8>,
 }
 
 impl HTMLMinifier {

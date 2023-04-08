@@ -1,8 +1,6 @@
 use core::fmt::{self, Display, Formatter};
-
 #[cfg(feature = "std")]
 use std::error::Error;
-
 #[cfg(feature = "std")]
 use std::io;
 

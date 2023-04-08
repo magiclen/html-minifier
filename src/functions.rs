@@ -1,5 +1,7 @@
-use core::fmt::{self, Formatter};
-use core::str::from_utf8_unchecked;
+use core::{
+    fmt::{self, Formatter},
+    str::from_utf8_unchecked,
+};
 
 #[inline]
 pub(crate) fn str_bytes_fmt(v: &[u8], f: &mut Formatter) -> Result<(), fmt::Error> {
