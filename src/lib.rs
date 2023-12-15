@@ -91,7 +91,6 @@ If you don't want to store your HTML in memory (e.g. writing to a file instead),
 ```rust
 use html_minifier::HTMLMinifierHelper;
 
-# #[cfg(feature = "std")] {
 use std::fs::File;
 use std::io::Read;
 
@@ -111,34 +110,14 @@ loop {
 
     html_minifier_helper.digest(&buffer[..c], &mut output_file).unwrap();
 }
-# }
-```
-
-## No Std
-
-Disable the default features to compile this crate without std.
-
-```toml
-[dependencies.html-minifier]
-version = "*"
-default-features = false
 ```
 */
-
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
-#[macro_use]
-extern crate educe;
-
 mod errors;
 mod functions;
 mod html_minifier_helper;
 mod html_writer;
 
-use alloc::{string::String, vec::Vec};
-
+use educe::Educe;
 pub use errors::*;
 pub use html_minifier_helper::*;
 pub use html_writer::*;
@@ -169,13 +148,13 @@ impl HTMLMinifier {
 
     /// Get whether to remove HTML comments.
     #[inline]
-    pub fn get_remove_comments(&self) -> bool {
+    pub const fn get_remove_comments(&self) -> bool {
         self.helper.remove_comments
     }
 
     /// Get whether to minify the content in the `code` element.
     #[inline]
-    pub fn get_minify_code(&self) -> bool {
+    pub const fn get_minify_code(&self) -> bool {
         self.helper.minify_code
     }
 }

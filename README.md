@@ -114,16 +114,6 @@ loop {
 }
 ```
 
-## No Std
-
-Disable the default features to compile this crate without std.
-
-```toml
-[dependencies.html-minifier]
-version = "*"
-default-features = false
-```
-
 ## Crates.io
 
 https://crates.io/crates/html-minifier

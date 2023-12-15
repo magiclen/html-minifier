@@ -1,7 +1,7 @@
-use alloc::{borrow::Cow, string::ToString, vec::Vec};
-use core::str::from_utf8_unchecked;
+use std::{borrow::Cow, str::from_utf8_unchecked};
 
 use cow_utils::CowUtils;
+use educe::Educe;
 pub use minifier::{css, js};
 
 use crate::{functions::*, HTMLMinifierError, HTMLWriter};
