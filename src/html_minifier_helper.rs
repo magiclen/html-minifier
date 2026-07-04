@@ -4,7 +4,7 @@ use educe::Educe;
 pub use minifier::{css, js};
 use str_utils::ToLowercase;
 
-use crate::{functions::*, HTMLMinifierError, HTMLWriter};
+use crate::{HTMLMinifierError, HTMLWriter, functions::*};
 
 #[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
 #[educe(Default)]

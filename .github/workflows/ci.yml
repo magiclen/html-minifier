@@ -58,7 +58,7 @@ jobs:
           - macos-latest
           - windows-latest
         toolchain:
-          - "1.80"
+          - "1.89.0"
         features:
           -
           - --no-default-features

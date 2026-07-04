@@ -313,7 +313,7 @@ fn minify_javascript() {
             )
             .unwrap();
 
-        assert_eq!(b"<script>alert('1234!')</script>", html_minifier.get_html());
+        assert_eq!(b"<script>alert('1234!');</script>", html_minifier.get_html());
     }
 
     html_minifier.reset();
@@ -329,7 +329,7 @@ fn minify_javascript() {
             .unwrap();
 
         assert_eq!(
-            r#"<script type="application/javascript">alert('1234!')</script>"#.as_bytes(),
+            r#"<script type="application/javascript">alert('1234!');</script>"#.as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -361,7 +361,7 @@ p  {
             .unwrap();
 
         assert_eq!(
-            "<script>alert('1234!')</script><style>h1{color:blue;font-family:verdana;font-size:\
+            "<script>alert('1234!');</script><style>h1{color:blue;font-family:verdana;font-size:\
              300%;}p{color:red;font-family:courier;font-size:160%;}</style>"
                 .as_bytes(),
             html_minifier.get_html()

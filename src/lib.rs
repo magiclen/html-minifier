@@ -81,7 +81,7 @@ let mut html_minifier = HTMLMinifier::new();
 
 html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 
-assert_eq!("<script type='application/javascript'>alert('Hello!')</script>".as_bytes(), html_minifier.get_html());
+assert_eq!("<script type='application/javascript'>alert('Hello!');</script>".as_bytes(), html_minifier.get_html());
 ```
 
 ## Write HTML to a Writer
@@ -194,7 +194,7 @@ impl HTMLMinifier {
 impl HTMLMinifier {
     /// Get HTML in a string slice.
     #[inline]
-    pub fn get_html(&mut self) -> &[u8] {
+    pub fn get_html(&self) -> &[u8] {
         self.out.as_slice()
     }
 }

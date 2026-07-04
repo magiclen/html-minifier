@@ -278,11 +278,11 @@ fn script_default() {
 fn script_javascript() {
     const CASES: [(&str, &str); 3] = [
         (
-            "<script type='application/javascript'>alert('1234!')</script>",
+            "<script type='application/javascript'>alert('1234!');</script>",
             "<script type='application/javascript'>   alert('1234!')    ;   </script>",
         ),
-        ("<script>alert('1234!')</script>", "<script>   alert('1234!')    ;   </script  >"),
-        ("<script>alert('1234!')</script>", "<script>alert('1234!');</script>"),
+        ("<script>alert('1234!');</script>", "<script>   alert('1234!')    ;   </script  >"),
+        ("<script>alert('1234!');</script>", "<script>alert('1234!');</script>"),
     ];
 
     test_enabled_all_options(&CASES);
@@ -542,11 +542,11 @@ fn width_2_script_default() {
 fn width_2_script_javascript() {
     const CASES: [(&str, &str); 3] = [
         (
-            "<script type='application/javascript'>alert('ééé!')</script>",
+            "<script type='application/javascript'>alert('ééé!');</script>",
             "<script type='application/javascript'>   alert('ééé!')    ;   </script>",
         ),
-        ("<script>alert('ééé!')</script>", "<script>   alert('ééé!')    ;   </script  >"),
-        ("<script>alert('ééé!')</script>", "<script>alert('ééé!');</script>"),
+        ("<script>alert('ééé!');</script>", "<script>   alert('ééé!')    ;   </script  >"),
+        ("<script>alert('ééé!');</script>", "<script>alert('ééé!');</script>"),
     ];
 
     test_enabled_all_options(&CASES);
@@ -707,11 +707,11 @@ fn width_n_script_default() {
 fn width_n_script_javascript() {
     const CASES: [(&str, &str); 3] = [
         (
-            "<script type='application/javascript'>alert('中中中!')</script>",
+            "<script type='application/javascript'>alert('中中中!');</script>",
             "<script type='application/javascript'>   alert('中中中!')    ;   </script>",
         ),
-        ("<script>alert('中中中!')</script>", "<script>   alert('中中中!')    ;   </script  >"),
-        ("<script>alert('中中中!')</script>", "<script>alert('中中中!');</script>"),
+        ("<script>alert('中中中!');</script>", "<script>   alert('中中中!')    ;   </script  >"),
+        ("<script>alert('中中中!');</script>", "<script>alert('中中中!');</script>"),
     ];
 
     test_enabled_all_options(&CASES);

@@ -1,9 +1,9 @@
 [package]
 name = "html-minifier"
-version = "5.0.0"
+version = "5.0.1"
 authors = ["Magic Len <len@magiclen.org>"]
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.89.0"
 repository = "https://github.com/magiclen/html-minifier"
 homepage = "https://magiclen.org/html-minifier"
 keywords = ["html", "minify", "script", "style"]

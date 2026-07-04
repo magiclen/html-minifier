@@ -83,7 +83,7 @@ let mut html_minifier = HTMLMinifier::new();
 
 html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 
-assert_eq!("<script type='application/javascript'>alert('Hello!')</script>".as_bytes(), html_minifier.get_html());
+assert_eq!("<script type='application/javascript'>alert('Hello!');</script>".as_bytes(), html_minifier.get_html());
 ```
 
 ## Write HTML to a Writer
