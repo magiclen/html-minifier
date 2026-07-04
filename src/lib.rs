@@ -88,7 +88,7 @@ assert_eq!("<script type='application/javascript'>alert('Hello!');</script>".as_
 
 If you don't want to store your HTML in memory (e.g. writing to a file instead), you can use the `HTMLMinifierHelper` struct which provides a low-level API that allows you to pass your output instance when invoking the `digest` method.
 
-```rust
+```rust,no_run
 use html_minifier::HTMLMinifierHelper;
 
 use std::fs::File;
