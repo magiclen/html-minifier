@@ -1,8 +1,8 @@
 use std::{borrow::Cow, str::from_utf8_unchecked};
 
-use cow_utils::CowUtils;
 use educe::Educe;
 pub use minifier::{css, js};
+use str_utils::ToLowercase;
 
 use crate::{functions::*, HTMLMinifierError, HTMLWriter};
 
@@ -101,7 +101,7 @@ impl HTMLMinifierHelper {
             }
 
             if let Cow::Owned(attribute_value) =
-                unsafe { from_utf8_unchecked(&self.attribute_type) }.cow_to_ascii_lowercase()
+                unsafe { from_utf8_unchecked(&self.attribute_type) }.to_ascii_lowercase_cow()
             {
                 self.attribute_type = attribute_value.into_bytes();
             }

@@ -3,10 +3,10 @@ name = "html-minifier"
 version = "5.0.0"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.80"
 repository = "https://github.com/magiclen/html-minifier"
 homepage = "https://magiclen.org/html-minifier"
-keywords = ["html", "minify", "sctipt", "style"]
+keywords = ["html", "minify", "script", "style"]
 categories = ["encoding"]
 description = "This library can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements."
 license = "MIT"
@@ -14,10 +14,10 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
 html-escape = "0.2"
-cow-utils = "0.1"
+str-utils = "0.3"
 minifier = "0.3"
 
 [dependencies.educe]
-version = ">=0.4"
+version = "0.5"
 features = ["Debug", "Default"]
 default-features = false
