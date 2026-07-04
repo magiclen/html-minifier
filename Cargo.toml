@@ -15,7 +15,7 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 [dependencies]
 html-escape = "0.2"
 str-utils = "0.3"
-minifier = "0.3"
+minifier = { version = "0.3", default-features = false }
 
 [dependencies.educe]
 version = "0.5"
