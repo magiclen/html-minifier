@@ -1,9 +1,9 @@
 [package]
 name = "html-minifier"
-version = "5.0.1"
+version = "5.0.2"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2024"
-rust-version = "1.89.0"
+rust-version = "1.89"
 repository = "https://github.com/magiclen/html-minifier"
 homepage = "https://magiclen.org/html-minifier"
 keywords = ["html", "minify", "script", "style"]
@@ -18,6 +18,6 @@ str-utils = "0.3"
 minifier = { version = "0.3", default-features = false }
 
 [dependencies.educe]
-version = "0.5"
+version = "0.7.3"
 features = ["Debug", "Default"]
 default-features = false
