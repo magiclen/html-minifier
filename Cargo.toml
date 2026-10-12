@@ -8,7 +8,7 @@ repository = "https://github.com/magiclen/html-minifier"
 homepage = "https://magiclen.org/html-minifier"
 keywords = ["html", "minify", "script", "style"]
 categories = ["encoding"]
-description = "This library can help you generate and minify your HTML code at the same time. It also supports to minify JS and CSS in `<style>`, `<script>` elements, and ignores the minification of `<pre>`, `<code>` and `<textarea>` elements."
+description = "This library minifies streaming HTML and optionally minifies embedded JavaScript and CSS while preserving pre and textarea content."
 license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 

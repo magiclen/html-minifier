@@ -1,4 +1,4 @@
-use std::{borrow::Cow, str::from_utf8_unchecked};
+use std::{borrow::Cow, str::from_utf8};
 
 use educe::Educe;
 pub use minifier::{css, js};
@@ -35,6 +35,36 @@ enum Step {
     Textarea,
 }
 
+impl Step {
+    #[inline]
+    const fn end_tag(self) -> Option<&'static [u8]> {
+        match self {
+            Step::ScriptDefault | Step::ScriptJavaScript => Some(b"</script"),
+            Step::StyleDefault | Step::StyleCSS => Some(b"</style"),
+            Step::Textarea => Some(b"</textarea"),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    const fn is_buffered(self) -> bool {
+        matches!(self, Step::ScriptJavaScript | Step::StyleCSS)
+    }
+}
+
+#[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
+#[educe(Default)]
+enum PreservedStep {
+    #[educe(Default)]
+    Data,
+    TagOpen,
+    TagName,
+    TagBody,
+    Declaration,
+    Comment,
+    Raw,
+}
+
 /// This struct helps you generate and minify your HTML code in the same time. The output destination is outside this struct.
 #[derive(Educe, Clone)]
 #[educe(Debug, Default(new))]
@@ -45,6 +75,10 @@ pub struct HTMLMinifierHelper {
     #[educe(Default = true)]
     /// Minify the content in the `code` element.
     pub minify_code:     bool,
+    /// Minify JavaScript in supported script elements, which is disabled by default.
+    pub minify_js:       bool,
+    /// Minify CSS in supported style elements, which is disabled by default.
+    pub minify_css:      bool,
 
     // Buffers
     #[educe(Debug(method = "str_bytes_fmt"))]
@@ -53,10 +87,18 @@ pub struct HTMLMinifierHelper {
     tag:            Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
     attribute_type: Vec<u8>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
+    preserved_tag:  Vec<u8>,
 
     // Steps
-    step:         Step,
-    step_counter: u8,
+    step:              Step,
+    step_counter:      u8,
+    preserved_step:    PreservedStep,
+    preserved_depth:   usize,
+    preserved_counter: u8,
+    preserved_end_tag: bool,
+    preserved_raw_end: &'static [u8],
+    preserved_quote:   u8,
 
     // Temp
     quote:      u8,
@@ -67,45 +109,38 @@ pub struct HTMLMinifierHelper {
     quoted_value_empty:   bool,
     in_handled_attribute: bool,
     in_attribute_type:    bool,
+    in_end_tag:           bool,
 }
 
 impl HTMLMinifierHelper {
     #[inline]
     fn set_flags_by_attribute(&mut self) {
-        match self.buffer.as_slice() {
-            b"class" => {
-                self.in_handled_attribute = true;
-                self.in_attribute_type = false;
-            },
-            b"type" => match self.tag.as_slice() {
-                b"script" | b"style" => {
-                    self.in_handled_attribute = true;
-                    self.in_attribute_type = true;
-                },
-                _ => (),
-            },
-            _ => {
-                self.in_handled_attribute = false;
-                self.in_attribute_type = false;
-            },
+        self.in_attribute_type =
+            self.buffer == b"type" && matches!(self.tag.as_slice(), b"script" | b"style");
+        self.in_handled_attribute = self.buffer == b"class" || self.in_attribute_type;
+
+        if self.in_attribute_type {
+            self.attribute_type.clear();
         }
     }
 
     #[inline]
-    fn finish_buffer(&mut self) {
+    fn finish_buffer(&mut self) -> Result<(), HTMLMinifierError> {
         if self.in_attribute_type {
-            if let Cow::Owned(attribute_value) = html_escape::decode_html_entities(unsafe {
-                from_utf8_unchecked(&self.attribute_type)
-            }) {
+            if let Cow::Owned(attribute_value) =
+                html_escape::decode_html_entities(from_utf8(&self.attribute_type)?)
+            {
                 self.attribute_type = attribute_value.into_bytes();
             }
 
             if let Cow::Owned(attribute_value) =
-                unsafe { from_utf8_unchecked(&self.attribute_type) }.to_ascii_lowercase_cow()
+                from_utf8(&self.attribute_type)?.to_ascii_lowercase_cow()
             {
                 self.attribute_type = attribute_value.into_bytes();
             }
         }
+
+        Ok(())
     }
 
     #[inline]
@@ -121,7 +156,7 @@ impl HTMLMinifierHelper {
                 self.step_counter = 0;
 
                 match self.attribute_type.as_slice() {
-                    b"" | b"application/javascript" | b"module" => {
+                    b"" | b"application/javascript" | b"module" if self.minify_js => {
                         out.push_bytes(&text_bytes[*start..=p])?;
                         *start = p + 1;
 
@@ -141,7 +176,7 @@ impl HTMLMinifierHelper {
                 self.step_counter = 0;
 
                 match self.attribute_type.as_slice() {
-                    b"" | b"text/css" => {
+                    b"" | b"text/css" if self.minify_css => {
                         out.push_bytes(&text_bytes[*start..=p])?;
                         *start = p + 1;
 
@@ -158,7 +193,7 @@ impl HTMLMinifierHelper {
                 }
             },
             b"pre" => {
-                self.step_counter = 0;
+                self.start_preserved();
                 Step::Pre
             },
             b"code" => {
@@ -167,7 +202,7 @@ impl HTMLMinifierHelper {
 
                     Step::InitialRemainOneWhitespace
                 } else {
-                    self.step_counter = 0;
+                    self.start_preserved();
                     Step::Code
                 }
             },
@@ -184,15 +219,234 @@ impl HTMLMinifierHelper {
 
         Ok(step)
     }
+
+    #[inline]
+    fn write_span(
+        &mut self,
+        bytes: &[u8],
+        out: &mut impl HTMLWriter,
+    ) -> Result<(), HTMLMinifierError> {
+        if self.step.is_buffered() {
+            self.buffer.extend_from_slice(bytes);
+            Ok(())
+        } else {
+            out.push_bytes(bytes)
+        }
+    }
+
+    fn write_minified(
+        &mut self,
+        length: usize,
+        out: &mut impl HTMLWriter,
+    ) -> Result<(), HTMLMinifierError> {
+        let text = from_utf8(&self.buffer[..length])?;
+        let minified = if self.step == Step::ScriptJavaScript {
+            js::minify(text).map_err(HTMLMinifierError::JSError)?.to_string()
+        } else {
+            css::minify(text).map_err(HTMLMinifierError::CSSError)?.to_string()
+        };
+
+        out.push_bytes(minified.as_bytes())?;
+        out.push_bytes(&self.buffer[length..])?;
+        self.buffer.clear();
+
+        Ok(())
+    }
+
+    #[inline]
+    fn push_quoted_value(
+        &mut self,
+        e: u8,
+        out: &mut impl HTMLWriter,
+        text_bytes: &[u8],
+        start: &mut usize,
+        p: usize,
+    ) -> Result<(), HTMLMinifierError> {
+        if self.quoted_value_empty {
+            self.quoted_value_empty = false;
+            out.push_bytes(&[b'=', self.quote])?;
+        } else if self.quoted_value_spacing {
+            out.push_bytes(&text_bytes[*start..p])?;
+            *start = p;
+            out.push(b' ')?;
+        }
+
+        if self.in_attribute_type {
+            if self.quoted_value_spacing {
+                self.attribute_type.push(b' ');
+            }
+            self.attribute_type.push(e);
+        }
+
+        self.quoted_value_spacing = false;
+        Ok(())
+    }
+
+    #[inline]
+    fn start_preserved(&mut self) {
+        self.preserved_step = PreservedStep::Data;
+        self.preserved_depth = 1;
+        self.preserved_counter = 0;
+        self.preserved_end_tag = false;
+        self.preserved_quote = 0;
+        self.preserved_raw_end = b"";
+        self.preserved_tag.clear();
+    }
+
+    #[inline]
+    fn end_preserved_tag(&mut self, e: u8) {
+        self.preserved_step = if e == b'>' {
+            if self.preserved_raw_end.is_empty() {
+                PreservedStep::Data
+            } else {
+                self.preserved_counter = 0;
+                PreservedStep::Raw
+            }
+        } else {
+            PreservedStep::TagBody
+        };
+    }
+
+    fn digest_preserved(&mut self, e: u8) -> bool {
+        match self.preserved_step {
+            PreservedStep::Data => {
+                if e == b'<' {
+                    self.preserved_step = PreservedStep::TagOpen;
+                    self.preserved_raw_end = b"";
+                    self.preserved_quote = 0;
+                }
+            },
+            PreservedStep::TagOpen => match e {
+                b'/' => {
+                    self.preserved_end_tag = true;
+                    self.preserved_tag.clear();
+                    self.preserved_step = PreservedStep::TagName;
+                },
+                b'!' => {
+                    self.preserved_counter = 0;
+                    self.preserved_step = PreservedStep::Declaration;
+                },
+                b'<' => (),
+                _ if e.is_ascii_alphabetic() => {
+                    self.preserved_end_tag = false;
+                    self.preserved_tag.clear();
+                    self.preserved_tag.push(e.to_ascii_lowercase());
+                    self.preserved_step = PreservedStep::TagName;
+                },
+                _ => self.preserved_step = PreservedStep::Data,
+            },
+            PreservedStep::TagName => {
+                if e == b'>' || e == b'/' || is_whitespace(e) {
+                    let root: &[u8] = if self.step == Step::Pre { b"pre" } else { b"code" };
+                    if self.preserved_tag == root {
+                        if self.preserved_end_tag {
+                            self.preserved_depth -= 1;
+                            if self.preserved_depth == 0 {
+                                return true;
+                            }
+                        } else {
+                            self.preserved_depth += 1;
+                        }
+                    }
+
+                    if !self.preserved_end_tag {
+                        self.preserved_raw_end = match self.preserved_tag.as_slice() {
+                            b"script" => b"</script",
+                            b"style" => b"</style",
+                            b"textarea" => b"</textarea",
+                            b"title" => b"</title",
+                            b"xmp" => b"</xmp",
+                            b"iframe" => b"</iframe",
+                            b"noembed" => b"</noembed",
+                            b"noframes" => b"</noframes",
+                            _ => b"",
+                        };
+                    }
+                    self.end_preserved_tag(e);
+                } else {
+                    self.preserved_tag.push(e.to_ascii_lowercase());
+                }
+            },
+            PreservedStep::TagBody => {
+                if self.preserved_quote != 0 {
+                    if e == self.preserved_quote {
+                        self.preserved_quote = 0;
+                    }
+                } else if e == b'\'' || e == b'"' {
+                    self.preserved_quote = e;
+                } else if e == b'>' {
+                    self.end_preserved_tag(e);
+                }
+            },
+            PreservedStep::Declaration => {
+                if e == b'-' && self.preserved_counter < 2 {
+                    self.preserved_counter += 1;
+                    if self.preserved_counter == 2 {
+                        self.preserved_counter = 0;
+                        self.preserved_step = PreservedStep::Comment;
+                    }
+                } else if e == b'>' {
+                    self.preserved_step = PreservedStep::Data;
+                } else {
+                    self.preserved_quote = if e == b'\'' || e == b'"' { e } else { 0 };
+                    self.preserved_step = PreservedStep::TagBody;
+                }
+            },
+            PreservedStep::Comment => match e {
+                b'-' => self.preserved_counter = (self.preserved_counter + 1).min(2),
+                b'>' if self.preserved_counter == 2 => self.preserved_step = PreservedStep::Data,
+                _ => self.preserved_counter = 0,
+            },
+            PreservedStep::Raw => {
+                if is_end_tag(e, self.preserved_raw_end, &mut self.preserved_counter) {
+                    self.preserved_raw_end = b"";
+                    self.preserved_quote = 0;
+                    self.end_preserved_tag(e);
+                }
+            },
+        }
+
+        false
+    }
 }
 
 impl HTMLMinifierHelper {
-    /// Reset this html minifier helper. The option settings and allocated memory will be be preserved.
+    /// Reset this HTML minifier helper while keeping its options and allocated memory.
     #[inline]
     pub fn reset(&mut self) {
         self.step = Step::default();
-
+        self.step_counter = 0;
+        self.buffer.clear();
+        self.tag.clear();
         self.attribute_type.clear();
+        self.preserved_tag.clear();
+        self.preserved_step = PreservedStep::default();
+        self.preserved_depth = 0;
+        self.preserved_counter = 0;
+        self.preserved_end_tag = false;
+        self.preserved_raw_end = b"";
+        self.preserved_quote = 0;
+        self.quote = 0;
+        self.last_space = 0;
+        self.quoted_value_spacing = false;
+        self.quoted_value_empty = false;
+        self.in_handled_attribute = false;
+        self.in_attribute_type = false;
+        self.in_end_tag = false;
+    }
+
+    /// Finish the current input and report any incomplete tag or special element.
+    /// An error can leave partial output in the writer.
+    pub fn finish<W: HTMLWriter>(&mut self, out: &mut W) -> Result<(), HTMLMinifierError> {
+        match self.step {
+            Step::Initial | Step::InitialRemainOneWhitespace | Step::InitialIgnoreWhitespace => (),
+            Step::StartTagInitial => out.push(b'<')?,
+            Step::EndTagInitial => out.push_bytes(b"</")?,
+            _ => return Err(HTMLMinifierError::IncompleteInput),
+        }
+
+        self.reset();
+        Ok(())
     }
 
     /// Input some text to generate HTML code. It is not necessary to input a full HTML text at once.
@@ -210,6 +464,58 @@ impl HTMLMinifierHelper {
         while p < text_length {
             let e = text_bytes[p];
 
+            if matches!(self.step, Step::Pre | Step::Code) {
+                if is_ascii_control(e) {
+                    out.push_bytes(&text_bytes[start..p])?;
+                    start = p + 1;
+                } else if self.digest_preserved(e) {
+                    self.last_space = 0;
+                    if e == b'>' {
+                        self.step = Step::InitialRemainOneWhitespace;
+                    } else {
+                        if is_whitespace(e) {
+                            out.push_bytes(&text_bytes[start..p])?;
+                            start = p + 1;
+                        }
+                        self.in_end_tag = true;
+                        self.step = Step::TagEnd;
+                    }
+                }
+
+                p += 1;
+                continue;
+            }
+
+            if let Some(end_tag) = self.step.end_tag() {
+                if is_ascii_control(e) {
+                    self.write_span(&text_bytes[start..p], out)?;
+                    start = p + 1;
+                } else if is_end_tag(e, end_tag, &mut self.step_counter) {
+                    let include_end = e == b'>' || e == b'/';
+                    if self.step.is_buffered() {
+                        let end = p + usize::from(include_end);
+                        self.buffer.extend_from_slice(&text_bytes[start..end]);
+                        start = p + 1;
+                        let length = self.buffer.len() - end_tag.len() - usize::from(include_end);
+                        self.write_minified(length, out)?;
+                    } else if is_whitespace(e) {
+                        out.push_bytes(&text_bytes[start..p])?;
+                        start = p + 1;
+                    }
+
+                    self.last_space = 0;
+                    if e == b'>' {
+                        self.step = Step::InitialRemainOneWhitespace;
+                    } else {
+                        self.in_end_tag = true;
+                        self.step = Step::TagEnd;
+                    }
+                }
+
+                p += 1;
+                continue;
+            }
+
             if e <= 0x7F {
                 // ASCII
                 if is_ascii_control(e) {
@@ -224,6 +530,8 @@ impl HTMLMinifierHelper {
                                     out.push_bytes(&text_bytes[start..p])?;
                                     start = p + 1;
 
+                                    self.in_end_tag = false;
+                                    self.attribute_type.clear();
                                     self.step = Step::StartTagInitial;
                                 },
                                 _ => {
@@ -250,6 +558,8 @@ impl HTMLMinifierHelper {
                                 out.push_bytes(&text_bytes[start..p])?;
                                 start = p + 1;
 
+                                self.in_end_tag = false;
+                                self.attribute_type.clear();
                                 self.step = Step::StartTagInitial;
                             } else {
                                 self.last_space = 0;
@@ -281,6 +591,8 @@ impl HTMLMinifierHelper {
                                     out.push_bytes(&text_bytes[start..p])?;
                                     start = p + 1;
 
+                                    self.in_end_tag = false;
+                                    self.attribute_type.clear();
                                     self.step = Step::StartTagInitial;
                                 },
                                 _ => {
@@ -303,6 +615,7 @@ impl HTMLMinifierHelper {
                                 b'/' => {
                                     start = p + 1;
 
+                                    self.in_end_tag = true;
                                     self.step = Step::EndTagInitial;
                                 },
                                 b'!' => {
@@ -483,9 +796,6 @@ impl HTMLMinifierHelper {
                             debug_assert_eq!(start, p);
 
                             match e {
-                                b'/' => {
-                                    self.step = Step::TagEnd;
-                                },
                                 b'>' => {
                                     self.step = self.end_start_tag_and_get_next_step(
                                         out, text_bytes, &mut start, p,
@@ -524,7 +834,7 @@ impl HTMLMinifierHelper {
                                     start = p + 1;
                                 }
 
-                                self.finish_buffer();
+                                self.finish_buffer()?;
 
                                 out.push_bytes(&text_bytes[start..=p])?;
                                 start = p + 1;
@@ -545,26 +855,7 @@ impl HTMLMinifierHelper {
                                     self.quoted_value_empty = false;
                                 }
                             } else {
-                                if self.quoted_value_empty {
-                                    self.quoted_value_empty = false;
-
-                                    out.push_bytes(&[b'=', self.quote])?;
-                                } else if self.quoted_value_spacing {
-                                    out.push_bytes(&text_bytes[start..p])?;
-                                    start = p;
-
-                                    out.push(b' ')?;
-                                }
-
-                                if self.in_attribute_type {
-                                    if self.quoted_value_spacing {
-                                        self.attribute_type.push(b' ');
-                                    }
-
-                                    self.attribute_type.push(e);
-                                }
-
-                                self.quoted_value_spacing = false;
+                                self.push_quoted_value(e, out, text_bytes, &mut start, p)?;
                             }
                         },
                         Step::StartTagUnquotedAttributeValue => {
@@ -572,14 +863,14 @@ impl HTMLMinifierHelper {
                             // <a a=v?
                             match e {
                                 b'>' => {
-                                    self.finish_buffer();
-
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
+                                    self.finish_buffer()?;
+                                    self.step = self.end_start_tag_and_get_next_step(
+                                        out, text_bytes, &mut start, p,
+                                    )?;
                                 },
                                 _ => {
                                     if is_whitespace(e) {
-                                        self.finish_buffer();
+                                        self.finish_buffer()?;
 
                                         out.push_bytes(&text_bytes[start..p])?;
                                         start = p + 1;
@@ -609,8 +900,14 @@ impl HTMLMinifierHelper {
                             // </a ?
                             match e {
                                 b'>' => {
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
+                                    if self.in_end_tag {
+                                        self.last_space = 0;
+                                        self.step = Step::InitialRemainOneWhitespace;
+                                    } else {
+                                        self.step = self.end_start_tag_and_get_next_step(
+                                            out, text_bytes, &mut start, p,
+                                        )?;
+                                    }
                                 },
                                 _ => {
                                     out.push_bytes(&text_bytes[start..p])?;
@@ -698,394 +995,13 @@ impl HTMLMinifierHelper {
                                 _ => unreachable!(),
                             }
                         },
-                        Step::ScriptDefault => match self.step_counter {
-                            0 => {
-                                if e == b'<' {
-                                    self.step_counter = 1;
-                                }
-                            },
-                            1 => match e {
-                                b'/' => self.step_counter = 2,
-                                _ => self.step_counter = 0,
-                            },
-                            2 => match e {
-                                b's' | b'S' => self.step_counter = 3,
-                                _ => self.step_counter = 0,
-                            },
-                            3 => match e {
-                                b'c' | b'C' => self.step_counter = 4,
-                                _ => self.step_counter = 0,
-                            },
-                            4 => match e {
-                                b'r' | b'R' => self.step_counter = 5,
-                                _ => self.step_counter = 0,
-                            },
-                            5 => match e {
-                                b'i' | b'I' => self.step_counter = 6,
-                                _ => self.step_counter = 0,
-                            },
-                            6 => match e {
-                                b'p' | b'P' => self.step_counter = 7,
-                                _ => self.step_counter = 0,
-                            },
-                            7 => match e {
-                                b't' | b'T' => self.step_counter = 8,
-                                _ => self.step_counter = 0,
-                            },
-                            8 => match e {
-                                b'>' => {
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
-                                _ => {
-                                    if is_whitespace(e) {
-                                        out.push_bytes(&text_bytes[start..p])?;
-                                        start = p + 1;
-
-                                        self.step = Step::TagEnd;
-                                    } else {
-                                        self.step_counter = 0;
-                                    }
-                                },
-                            },
-                            _ => unreachable!(),
-                        },
-                        Step::ScriptJavaScript => match self.step_counter {
-                            0 => {
-                                if e == b'<' {
-                                    self.step_counter = 1;
-                                }
-                            },
-                            1 => match e {
-                                b'/' => self.step_counter = 2,
-                                _ => self.step_counter = 0,
-                            },
-                            2 => match e {
-                                b's' | b'S' => self.step_counter = 3,
-                                _ => self.step_counter = 0,
-                            },
-                            3 => match e {
-                                b'c' | b'C' => self.step_counter = 4,
-                                _ => self.step_counter = 0,
-                            },
-                            4 => match e {
-                                b'r' | b'R' => self.step_counter = 5,
-                                _ => self.step_counter = 0,
-                            },
-                            5 => match e {
-                                b'i' | b'I' => self.step_counter = 6,
-                                _ => self.step_counter = 0,
-                            },
-                            6 => match e {
-                                b'p' | b'P' => self.step_counter = 7,
-                                _ => self.step_counter = 0,
-                            },
-                            7 => match e {
-                                b't' | b'T' => self.step_counter = 8,
-                                _ => self.step_counter = 0,
-                            },
-                            8 => match e {
-                                b'>' => {
-                                    self.buffer.extend_from_slice(&text_bytes[start..=p]);
-                                    start = p + 1;
-
-                                    let script_length = self.buffer.len() - 9;
-
-                                    let minified_js = js::minify(unsafe {
-                                        from_utf8_unchecked(&self.buffer[..script_length])
-                                    })
-                                    .map_err(HTMLMinifierError::JSError)?;
-                                    out.push_bytes(minified_js.to_string().as_bytes())?;
-                                    out.push_bytes(&self.buffer[script_length..])?;
-
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
-                                _ => {
-                                    if is_whitespace(e) {
-                                        self.buffer.extend_from_slice(&text_bytes[start..p]);
-                                        start = p + 1;
-
-                                        let buffer_length = self.buffer.len();
-                                        let script_length = buffer_length - 8;
-
-                                        let minified_js = js::minify(unsafe {
-                                            from_utf8_unchecked(&self.buffer[..script_length])
-                                        })
-                                        .map_err(HTMLMinifierError::JSError)?;
-                                        out.push_bytes(minified_js.to_string().as_bytes())?;
-                                        out.push_bytes(&self.buffer[script_length..])?;
-
-                                        self.step = Step::TagEnd;
-                                    } else {
-                                        self.step_counter = 0;
-                                    }
-                                },
-                            },
-                            _ => unreachable!(),
-                        },
-                        Step::StyleDefault => match self.step_counter {
-                            0 => {
-                                if e == b'<' {
-                                    self.step_counter = 1;
-                                }
-                            },
-                            1 => match e {
-                                b'/' => self.step_counter = 2,
-                                _ => self.step_counter = 0,
-                            },
-                            2 => match e {
-                                b's' | b'S' => self.step_counter = 3,
-                                _ => self.step_counter = 0,
-                            },
-                            3 => match e {
-                                b't' | b'T' => self.step_counter = 4,
-                                _ => self.step_counter = 0,
-                            },
-                            4 => match e {
-                                b'y' | b'Y' => self.step_counter = 5,
-                                _ => self.step_counter = 0,
-                            },
-                            5 => match e {
-                                b'l' | b'L' => self.step_counter = 6,
-                                _ => self.step_counter = 0,
-                            },
-                            6 => match e {
-                                b'e' | b'E' => self.step_counter = 7,
-                                _ => self.step_counter = 0,
-                            },
-                            7 => match e {
-                                b'>' => {
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
-                                _ => {
-                                    if is_whitespace(e) {
-                                        out.push_bytes(&text_bytes[start..p])?;
-                                        start = p + 1;
-
-                                        self.step = Step::TagEnd;
-                                    } else {
-                                        self.step_counter = 0;
-                                    }
-                                },
-                            },
-                            _ => unreachable!(),
-                        },
-                        Step::StyleCSS => match self.step_counter {
-                            0 => {
-                                if e == b'<' {
-                                    self.step_counter = 1;
-                                }
-                            },
-                            1 => match e {
-                                b'/' => self.step_counter = 2,
-                                _ => self.step_counter = 0,
-                            },
-                            2 => match e {
-                                b's' | b'S' => self.step_counter = 3,
-                                _ => self.step_counter = 0,
-                            },
-                            3 => match e {
-                                b't' | b'T' => self.step_counter = 4,
-                                _ => self.step_counter = 0,
-                            },
-                            4 => match e {
-                                b'y' | b'Y' => self.step_counter = 5,
-                                _ => self.step_counter = 0,
-                            },
-                            5 => match e {
-                                b'l' | b'L' => self.step_counter = 6,
-                                _ => self.step_counter = 0,
-                            },
-                            6 => match e {
-                                b'e' | b'E' => self.step_counter = 7,
-                                _ => self.step_counter = 0,
-                            },
-                            7 => match e {
-                                b'>' => {
-                                    self.buffer.extend_from_slice(&text_bytes[start..=p]);
-                                    start = p + 1;
-
-                                    let script_length = self.buffer.len() - 8;
-
-                                    let minified_css = css::minify(unsafe {
-                                        from_utf8_unchecked(&self.buffer[..script_length])
-                                    })
-                                    .map_err(HTMLMinifierError::CSSError)?;
-                                    out.push_bytes(minified_css.to_string().as_bytes())?;
-                                    out.push_bytes(&self.buffer[script_length..])?;
-
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
-                                _ => {
-                                    if is_whitespace(e) {
-                                        self.buffer.extend_from_slice(&text_bytes[start..p]);
-                                        start = p + 1;
-
-                                        let buffer_length = self.buffer.len();
-                                        let script_length = buffer_length - 7;
-
-                                        let minified_css = css::minify(unsafe {
-                                            from_utf8_unchecked(&self.buffer[..script_length])
-                                        })
-                                        .map_err(HTMLMinifierError::CSSError)?;
-                                        out.push_bytes(minified_css.to_string().as_bytes())?;
-                                        out.push_bytes(&self.buffer[script_length..])?;
-
-                                        self.step = Step::TagEnd;
-                                    } else {
-                                        self.step_counter = 0;
-                                    }
-                                },
-                            },
-                            _ => unreachable!(),
-                        },
-                        Step::Pre => match self.step_counter {
-                            0 => {
-                                if e == b'<' {
-                                    self.step_counter = 1;
-                                }
-                            },
-                            1 => match e {
-                                b'/' => self.step_counter = 2,
-                                _ => self.step_counter = 0,
-                            },
-                            2 => match e {
-                                b'p' | b'P' => self.step_counter = 3,
-                                _ => self.step_counter = 0,
-                            },
-                            3 => match e {
-                                b'r' | b'R' => self.step_counter = 4,
-                                _ => self.step_counter = 0,
-                            },
-                            4 => match e {
-                                b'e' | b'E' => self.step_counter = 5,
-                                _ => self.step_counter = 0,
-                            },
-                            5 => match e {
-                                b'>' => {
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
-                                _ => {
-                                    if is_whitespace(e) {
-                                        out.push_bytes(&text_bytes[start..p])?;
-                                        start = p + 1;
-
-                                        self.step = Step::TagEnd;
-                                    } else {
-                                        self.step_counter = 0;
-                                    }
-                                },
-                            },
-                            _ => unreachable!(),
-                        },
-                        Step::Code => match self.step_counter {
-                            0 => {
-                                if e == b'<' {
-                                    self.step_counter = 1;
-                                }
-                            },
-                            1 => match e {
-                                b'/' => self.step_counter = 2,
-                                _ => self.step_counter = 0,
-                            },
-                            2 => match e {
-                                b'c' | b'C' => self.step_counter = 3,
-                                _ => self.step_counter = 0,
-                            },
-                            3 => match e {
-                                b'o' | b'O' => self.step_counter = 4,
-                                _ => self.step_counter = 0,
-                            },
-                            4 => match e {
-                                b'd' | b'D' => self.step_counter = 5,
-                                _ => self.step_counter = 0,
-                            },
-                            5 => match e {
-                                b'e' | b'E' => self.step_counter = 6,
-                                _ => self.step_counter = 0,
-                            },
-                            6 => match e {
-                                b'>' => {
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
-                                _ => {
-                                    if is_whitespace(e) {
-                                        out.push_bytes(&text_bytes[start..p])?;
-                                        start = p + 1;
-
-                                        self.step = Step::TagEnd;
-                                    } else {
-                                        self.step_counter = 0;
-                                    }
-                                },
-                            },
-                            _ => unreachable!(),
-                        },
-                        Step::Textarea => match self.step_counter {
-                            0 => {
-                                if e == b'<' {
-                                    self.step_counter = 1;
-                                }
-                            },
-                            1 => match e {
-                                b'/' => self.step_counter = 2,
-                                _ => self.step_counter = 0,
-                            },
-                            2 => match e {
-                                b't' | b'T' => self.step_counter = 3,
-                                _ => self.step_counter = 0,
-                            },
-                            3 => match e {
-                                b'e' | b'E' => self.step_counter = 4,
-                                _ => self.step_counter = 0,
-                            },
-                            4 => match e {
-                                b'x' | b'X' => self.step_counter = 5,
-                                _ => self.step_counter = 0,
-                            },
-                            5 => match e {
-                                b't' | b'T' => self.step_counter = 6,
-                                _ => self.step_counter = 0,
-                            },
-                            6 => match e {
-                                b'a' | b'A' => self.step_counter = 7,
-                                _ => self.step_counter = 0,
-                            },
-                            7 => match e {
-                                b'r' | b'R' => self.step_counter = 8,
-                                _ => self.step_counter = 0,
-                            },
-                            8 => match e {
-                                b'e' | b'E' => self.step_counter = 9,
-                                _ => self.step_counter = 0,
-                            },
-                            9 => match e {
-                                b'a' | b'A' => self.step_counter = 10,
-                                _ => self.step_counter = 0,
-                            },
-                            10 => match e {
-                                b'>' => {
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
-                                _ => {
-                                    if is_whitespace(e) {
-                                        out.push_bytes(&text_bytes[start..p])?;
-                                        start = p + 1;
-
-                                        self.step = Step::TagEnd;
-                                    } else {
-                                        self.step_counter = 0;
-                                    }
-                                },
-                            },
-                            _ => unreachable!(),
-                        },
+                        Step::ScriptDefault
+                        | Step::ScriptJavaScript
+                        | Step::StyleDefault
+                        | Step::StyleCSS
+                        | Step::Pre
+                        | Step::Code
+                        | Step::Textarea => unreachable!(),
                     }
                 }
             } else {
@@ -1171,19 +1087,7 @@ impl HTMLMinifierHelper {
                         self.step = Step::StartTagUnquotedAttributeValue;
                     },
                     Step::StartTagQuotedAttributeValue => {
-                        // <a a="?
-                        // <a a='?
-                        if self.quoted_value_empty {
-                            self.quoted_value_empty = false;
-
-                            out.push_bytes(&[b'=', self.quote])?;
-                        }
-
-                        self.quoted_value_spacing = false;
-
-                        if self.in_attribute_type {
-                            self.attribute_type.push(e);
-                        }
+                        self.push_quoted_value(e, out, text_bytes, &mut start, p)?;
                     },
                     Step::StartTagUnquotedAttributeValue => {
                         // <a a=v?
@@ -1221,21 +1125,14 @@ impl HTMLMinifierHelper {
                     | Step::Code
                     | Step::Textarea
                     | Step::ScriptJavaScript
-                    | Step::StyleCSS => {
-                        self.step_counter = 0;
-                    },
+                    | Step::StyleCSS => unreachable!(),
                 }
             }
 
             p += 1;
         }
 
-        match self.step {
-            Step::ScriptJavaScript | Step::StyleCSS => {
-                self.buffer.extend_from_slice(&text_bytes[start..p]);
-            },
-            _ => out.push_bytes(&text_bytes[start..p])?,
-        }
+        self.write_span(&text_bytes[start..p], out)?;
 
         Ok(())
     }

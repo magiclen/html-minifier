@@ -5,6 +5,8 @@ use html_minifier::HTMLMinifier;
 fn test_enabled_all_options(cases: &[(&str, &str)]) {
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
         let mut html_minifier = HTMLMinifier::new();
+        html_minifier.set_minify_js(true);
+        html_minifier.set_minify_css(true);
         html_minifier.digest(test).unwrap();
         assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case {}", index);
     }
@@ -13,6 +15,8 @@ fn test_enabled_all_options(cases: &[(&str, &str)]) {
 
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
         let mut html_minifier = HTMLMinifier::new();
+        html_minifier.set_minify_js(true);
+        html_minifier.set_minify_css(true);
 
         for c in test.chars() {
             html_minifier.digest(c.encode_utf8(&mut buffer)).unwrap();
@@ -23,6 +27,8 @@ fn test_enabled_all_options(cases: &[(&str, &str)]) {
 
     for (index, (expect, test)) in cases.iter().copied().enumerate() {
         let mut html_minifier = HTMLMinifier::new();
+        html_minifier.set_minify_js(true);
+        html_minifier.set_minify_css(true);
 
         let mut chars = test.chars();
 
@@ -174,7 +180,7 @@ fn start_tag_attribute_name_waiting_value() {
 #[test]
 fn start_tag_attribute_value_initial() {
     const CASES: [(&str, &str); 7] = [
-        ("<aaa abc/", "<aaa abc=/"),
+        ("<aaa abc=/", "<aaa abc=/"),
         ("<aaa abc>", "<aaa abc=>"),
         ("<aaa abc", "<aaa abc=\""),
         ("<aaa abc", "<aaa abc='"),

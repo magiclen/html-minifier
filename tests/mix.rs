@@ -245,6 +245,7 @@ fn text_mix_basic() {
 #[test]
 fn minify_css() {
     let mut html_minifier = HTMLMinifier::new();
+    html_minifier.set_minify_css(true);
 
     {
         html_minifier
@@ -302,6 +303,7 @@ p  {
 #[test]
 fn minify_javascript() {
     let mut html_minifier = HTMLMinifier::new();
+    html_minifier.set_minify_js(true);
 
     {
         html_minifier
@@ -338,6 +340,8 @@ fn minify_javascript() {
 #[test]
 fn minify_javascript_css() {
     let mut html_minifier = HTMLMinifier::new();
+    html_minifier.set_minify_js(true);
+    html_minifier.set_minify_css(true);
 
     {
         html_minifier
