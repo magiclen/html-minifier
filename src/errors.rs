@@ -7,6 +7,7 @@ use std::{
 /// Errors for `HTMLMinifier`.
 #[derive(Debug)]
 pub enum HTMLMinifierError {
+    JSError(&'static str),
     CSSError(&'static str),
     IOError(io::Error),
 }
@@ -22,6 +23,7 @@ impl Display for HTMLMinifierError {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
+            HTMLMinifierError::JSError(error) => Display::fmt(error, f),
             HTMLMinifierError::CSSError(error) => Display::fmt(error, f),
             HTMLMinifierError::IOError(error) => Display::fmt(error, f),
         }

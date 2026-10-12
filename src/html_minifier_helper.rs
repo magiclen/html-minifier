@@ -793,7 +793,8 @@ impl HTMLMinifierHelper {
 
                                     let minified_js = js::minify(unsafe {
                                         from_utf8_unchecked(&self.buffer[..script_length])
-                                    });
+                                    })
+                                    .map_err(HTMLMinifierError::JSError)?;
                                     out.push_bytes(minified_js.to_string().as_bytes())?;
                                     out.push_bytes(&self.buffer[script_length..])?;
 
@@ -810,7 +811,8 @@ impl HTMLMinifierHelper {
 
                                         let minified_js = js::minify(unsafe {
                                             from_utf8_unchecked(&self.buffer[..script_length])
-                                        });
+                                        })
+                                        .map_err(HTMLMinifierError::JSError)?;
                                         out.push_bytes(minified_js.to_string().as_bytes())?;
                                         out.push_bytes(&self.buffer[script_length..])?;
 
