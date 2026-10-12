@@ -1,4 +1,4 @@
-use std::{borrow::Cow, str::from_utf8};
+use std::{borrow::Cow, fmt::Write as _, str::from_utf8};
 
 use educe::Educe;
 pub use minifier::{css, js};
@@ -82,13 +82,14 @@ pub struct HTMLMinifierHelper {
 
     // Buffers
     #[educe(Debug(method = "str_bytes_fmt"))]
-    buffer:         Vec<u8>,
+    buffer:          Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    tag:            Vec<u8>,
+    tag:             Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    attribute_type: Vec<u8>,
+    attribute_type:  Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    preserved_tag:  Vec<u8>,
+    preserved_tag:   Vec<u8>,
+    minified_buffer: String,
 
     // Steps
     step:              Step,
@@ -240,15 +241,26 @@ impl HTMLMinifierHelper {
         out: &mut impl HTMLWriter,
     ) -> Result<(), HTMLMinifierError> {
         let text = from_utf8(&self.buffer[..length])?;
-        let minified = if self.step == Step::ScriptJavaScript {
-            js::minify(text).map_err(HTMLMinifierError::JSError)?.to_string()
+        self.minified_buffer.clear();
+        let result = if self.step == Step::ScriptJavaScript {
+            write!(
+                self.minified_buffer,
+                "{}",
+                js::minify(text).map_err(HTMLMinifierError::JSError)?
+            )
         } else {
-            css::minify(text).map_err(HTMLMinifierError::CSSError)?.to_string()
+            write!(
+                self.minified_buffer,
+                "{}",
+                css::minify(text).map_err(HTMLMinifierError::CSSError)?
+            )
         };
+        result.expect("Writing to a String cannot fail.");
 
-        out.push_bytes(minified.as_bytes())?;
+        out.push_bytes(self.minified_buffer.as_bytes())?;
         out.push_bytes(&self.buffer[length..])?;
         self.buffer.clear();
+        self.minified_buffer.clear();
 
         Ok(())
     }
@@ -421,6 +433,7 @@ impl HTMLMinifierHelper {
         self.attribute_type.clear();
         self.preserved_tag.clear();
         self.preserved_step = PreservedStep::default();
+        self.minified_buffer.clear();
         self.preserved_depth = 0;
         self.preserved_counter = 0;
         self.preserved_end_tag = false;
