@@ -260,6 +260,21 @@ fn closing_tag_overlap_restarts_at_less_than() {
 }
 
 #[test]
+fn embedded_end_tag_prefixes_are_replayed() {
+    test_cases(
+        &[
+            (
+                "<script>s=\"</scr\"+\"ipt>\";</script>",
+                "<script> s = \"</scr\" + \"ipt>\"; </script>",
+            ),
+            ("<style>a{content:\"</sty\";}</style>", "<style> a { content: \"</sty\"; } </style>"),
+            ("<script>a();</SCRIPT><p>b c</p>", "<script> a(); </SCRIPT  ><p>b   c</p>"),
+        ],
+        minify_embedded,
+    );
+}
+
+#[test]
 fn attribute_flags_do_not_leak() {
     test_cases(
         &[

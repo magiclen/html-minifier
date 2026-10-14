@@ -160,10 +160,12 @@ html_minifier_helper.finish(&mut output).unwrap();
 output.flush().unwrap();
 ```
 */
+mod css_minifier;
 mod errors;
 mod functions;
 mod html_minifier_helper;
 mod html_writer;
+mod js_minifier;
 
 use educe::Educe;
 pub use errors::*;

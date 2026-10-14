@@ -1,9 +1,11 @@
-use std::{fmt::Write as _, str::from_utf8};
+use std::str::from_utf8;
 
 use educe::Educe;
 pub use minifier::{css, js};
 
-use crate::{HTMLMinifierError, HTMLWriter, functions::*};
+use crate::{
+    HTMLMinifierError, HTMLWriter, css_minifier::CSSMinifier, functions::*, js_minifier::JSMinifier,
+};
 
 /// The longest `type` attribute value that is collected.
 /// A longer value is never a supported type.
@@ -72,7 +74,7 @@ impl Step {
     }
 
     #[inline]
-    const fn is_buffered(self) -> bool {
+    const fn is_embedded(self) -> bool {
         matches!(self, Step::ScriptJavaScript | Step::StyleCSS)
     }
 }
@@ -114,14 +116,19 @@ pub struct HTMLMinifierHelper {
 
     // Buffers
     #[educe(Debug(method = "str_bytes_fmt"))]
-    buffer:          Vec<u8>,
+    buffer:         Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    tag:             Vec<u8>,
+    tag:            Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    attribute_type:  Vec<u8>,
+    attribute_type: Vec<u8>,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    preserved_tag:   Vec<u8>,
-    minified_buffer: String,
+    preserved_tag:  Vec<u8>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
+    held:           [u8; 8],
+
+    // Embedded code
+    css: CSSMinifier,
+    js:  JSMinifier,
 
     // Steps
     step:              Step,
@@ -207,7 +214,7 @@ impl HTMLMinifierHelper {
                     out.push_bytes(&text_bytes[*start..=p])?;
                     *start = p + 1;
 
-                    self.buffer.clear();
+                    self.js.reset();
 
                     Step::ScriptJavaScript
                 } else {
@@ -221,7 +228,7 @@ impl HTMLMinifierHelper {
                     out.push_bytes(&text_bytes[*start..=p])?;
                     *start = p + 1;
 
-                    self.buffer.clear();
+                    self.css.reset();
 
                     Step::StyleCSS
                 } else {
@@ -262,12 +269,91 @@ impl HTMLMinifierHelper {
         bytes: &[u8],
         out: &mut impl HTMLWriter,
     ) -> Result<(), HTMLMinifierError> {
-        if self.step.is_buffered() {
-            self.buffer.extend_from_slice(bytes);
-            Ok(())
+        if self.step.is_embedded() { self.feed_embedded(bytes, out) } else { out.push_bytes(bytes) }
+    }
+
+    #[inline]
+    fn feed_embedded(
+        &mut self,
+        bytes: &[u8],
+        out: &mut impl HTMLWriter,
+    ) -> Result<(), HTMLMinifierError> {
+        if self.step == Step::ScriptJavaScript {
+            self.js.feed(bytes, out)
         } else {
-            out.push_bytes(bytes)
+            self.css.feed(bytes, out)
         }
+    }
+
+    #[inline]
+    fn finish_embedded(&mut self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
+        if self.step == Step::ScriptJavaScript { self.js.finish(out) } else { self.css.finish(out) }
+    }
+
+    /// Leave raw text or preserved content after the name of its end tag.
+    #[inline]
+    fn end_raw_text(&mut self, e: u8) {
+        self.last_space = 0;
+
+        if e == b'>' {
+            self.step = Step::InitialRemainOneWhitespace;
+        } else {
+            self.in_end_tag = true;
+            self.step = Step::TagEnd;
+        }
+    }
+
+    /// Process a byte of embedded JavaScript or CSS.
+    /// The bytes that may start its end tag are held back until it is clear whether they are content.
+    fn digest_embedded(
+        &mut self,
+        e: u8,
+        out: &mut impl HTMLWriter,
+        text_bytes: &[u8],
+        start: &mut usize,
+        p: usize,
+        end_tag: &[u8],
+    ) -> Result<(), HTMLMinifierError> {
+        if is_ascii_control(e) {
+            self.feed_embedded(&text_bytes[*start..p], out)?;
+            *start = p + 1;
+
+            return Ok(());
+        }
+
+        let matched = usize::from(self.step_counter);
+
+        if is_end_tag(e, end_tag, &mut self.step_counter) {
+            self.finish_embedded(out)?;
+            out.push_bytes(&self.held[..matched])?;
+
+            // The whitespace after the end tag name is removed.
+            *start = if is_whitespace(e) { p + 1 } else { p };
+
+            self.end_raw_text(e);
+        } else if usize::from(self.step_counter) > matched {
+            if matched == 0 {
+                self.feed_embedded(&text_bytes[*start..p], out)?;
+            }
+
+            self.held[matched] = e;
+            *start = p + 1;
+        } else {
+            if matched > 0 {
+                let held = self.held;
+                self.feed_embedded(&held[..matched], out)?;
+            }
+
+            if self.step_counter == 1 {
+                // This `<` may start the end tag.
+                self.held[0] = e;
+                *start = p + 1;
+            } else {
+                self.normalize_line_break(e, out, text_bytes, start, p)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Check whether the byte before `p` is a CR, including the last byte of the previous chunk.
@@ -306,36 +392,6 @@ impl HTMLMinifierHelper {
             1 => out.push_bytes(b"<!-"),
             _ => Ok(()),
         }
-    }
-
-    fn write_minified(
-        &mut self,
-        length: usize,
-        out: &mut impl HTMLWriter,
-    ) -> Result<(), HTMLMinifierError> {
-        let text = from_utf8(&self.buffer[..length])?;
-        self.minified_buffer.clear();
-        let result = if self.step == Step::ScriptJavaScript {
-            write!(
-                self.minified_buffer,
-                "{}",
-                js::minify(text).map_err(HTMLMinifierError::JSError)?
-            )
-        } else {
-            write!(
-                self.minified_buffer,
-                "{}",
-                css::minify(text).map_err(HTMLMinifierError::CSSError)?
-            )
-        };
-        result.expect("Writing to a String cannot fail.");
-
-        out.push_bytes(self.minified_buffer.as_bytes())?;
-        out.push_bytes(&self.buffer[length..])?;
-        self.buffer.clear();
-        self.minified_buffer.clear();
-
-        Ok(())
     }
 
     #[inline]
@@ -543,7 +599,8 @@ impl HTMLMinifierHelper {
         self.attribute_type.clear();
         self.preserved_tag.clear();
         self.preserved_step = PreservedStep::default();
-        self.minified_buffer.clear();
+        self.css.reset();
+        self.js.reset();
         self.preserved_depth = 0;
         self.preserved_counter = 0;
         self.preserved_end_tag = false;
@@ -595,17 +652,12 @@ impl HTMLMinifierHelper {
                     out.push_bytes(&text_bytes[start..p])?;
                     start = p + 1;
                 } else if self.digest_preserved(e) {
-                    self.last_space = 0;
-                    if e == b'>' {
-                        self.step = Step::InitialRemainOneWhitespace;
-                    } else {
-                        if is_whitespace(e) {
-                            out.push_bytes(&text_bytes[start..p])?;
-                            start = p + 1;
-                        }
-                        self.in_end_tag = true;
-                        self.step = Step::TagEnd;
+                    if is_whitespace(e) {
+                        out.push_bytes(&text_bytes[start..p])?;
+                        start = p + 1;
                     }
+
+                    self.end_raw_text(e);
                 } else {
                     self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                 }
@@ -615,29 +667,18 @@ impl HTMLMinifierHelper {
             }
 
             if let Some(end_tag) = self.step.end_tag() {
-                if is_ascii_control(e) {
-                    self.write_span(&text_bytes[start..p], out)?;
+                if self.step.is_embedded() {
+                    self.digest_embedded(e, out, text_bytes, &mut start, p, end_tag)?;
+                } else if is_ascii_control(e) {
+                    out.push_bytes(&text_bytes[start..p])?;
                     start = p + 1;
                 } else if is_end_tag(e, end_tag, &mut self.step_counter) {
-                    let include_end = e == b'>' || e == b'/';
-                    if self.step.is_buffered() {
-                        let end = p + usize::from(include_end);
-                        self.buffer.extend_from_slice(&text_bytes[start..end]);
-                        start = p + 1;
-                        let length = self.buffer.len() - end_tag.len() - usize::from(include_end);
-                        self.write_minified(length, out)?;
-                    } else if is_whitespace(e) {
+                    if is_whitespace(e) {
                         out.push_bytes(&text_bytes[start..p])?;
                         start = p + 1;
                     }
 
-                    self.last_space = 0;
-                    if e == b'>' {
-                        self.step = Step::InitialRemainOneWhitespace;
-                    } else {
-                        self.in_end_tag = true;
-                        self.step = Step::TagEnd;
-                    }
+                    self.end_raw_text(e);
                 } else {
                     self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                 }
