@@ -277,19 +277,51 @@ fn attribute_flags_do_not_leak() {
 }
 
 #[test]
+fn embedded_type_detection() {
+    test_cases(
+        &[
+            (
+                "<script type='text/javascript'>a();</script>",
+                "<script type='text/javascript'> a(); </script>",
+            ),
+            (
+                "<style type='Text/CSS'>p{color:red;}</style>",
+                "<style type='Text/CSS'> p { color: red; } </style>",
+            ),
+            (
+                "<style type='text&#47;css'>p{color:red;}</style>",
+                "<style type='text&#47;css'> p { color: red; } </style>",
+            ),
+            (
+                "<script type='text/plain' type> a(); </script>",
+                "<script type='text/plain' type=''> a(); </script>",
+            ),
+            (
+                "<script type type='text/plain'>a();</script>",
+                "<script type='' type='text/plain'> a(); </script>",
+            ),
+        ],
+        minify_embedded,
+    );
+}
+
+#[test]
 fn byte_input_debug_and_utf8_conversion() {
     let mut minifier = HTMLMinifier::new();
     minifier.digest([0xFF]).unwrap();
     let _ = format!("{minifier:?}");
     assert_eq!([0xFF], minifier.into_html().unwrap().as_slice());
 
-    for input in
-        [b"<script>\xFF</script>".as_slice(), b"<style>\xFF</style>", b"<script type='\xFF'>"]
-    {
+    for input in [b"<script>\xFF</script>".as_slice(), b"<style>\xFF</style>"] {
         let mut minifier = HTMLMinifier::new();
         minify_embedded(&mut minifier);
         assert!(matches!(minifier.digest(input), Err(HTMLMinifierError::UTF8Error(_))));
     }
+
+    let mut minifier = HTMLMinifier::new();
+    minify_embedded(&mut minifier);
+    minifier.digest(b"<script type='\xFF'> a(); </script>").unwrap();
+    assert_eq!(b"<script type='\xFF'> a(); </script>", minifier.into_html().unwrap().as_slice());
     test_cases(
         &[(
             "<script type='application/javascript'>alert('中文😀');</script>",

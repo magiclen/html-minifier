@@ -1,10 +1,35 @@
-use std::{borrow::Cow, fmt::Write as _, str::from_utf8};
+use std::{fmt::Write as _, str::from_utf8};
 
 use educe::Educe;
 pub use minifier::{css, js};
-use str_utils::ToLowercase;
 
 use crate::{HTMLMinifierError, HTMLWriter, functions::*};
+
+/// The longest `type` attribute value that is collected.
+/// A longer value is never a supported type.
+const MAX_TYPE_LENGTH: usize = 256;
+
+/// Check whether the `type` attribute value of a `script` or `style` element enables minification.
+fn is_supported_type(tag: &[u8], value: &[u8]) -> bool {
+    // Every supported type is ASCII, and decoding entities never removes a non-ASCII byte.
+    if value.len() > MAX_TYPE_LENGTH || !value.is_ascii() {
+        return false;
+    }
+
+    let types: &[&[u8]] = if tag == b"script" {
+        &[b"", b"application/javascript", b"text/javascript", b"module"]
+    } else {
+        &[b"", b"text/css"]
+    };
+
+    if value.contains(&b'&') {
+        let decoded = html_escape::decode_html_entities(from_utf8(value).unwrap_or_default());
+
+        types.iter().any(|t| decoded.as_bytes().eq_ignore_ascii_case(t))
+    } else {
+        types.iter().any(|t| value.eq_ignore_ascii_case(t))
+    }
+}
 
 #[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
 #[educe(Default)]
@@ -119,38 +144,51 @@ pub struct HTMLMinifierHelper {
     quoted_value_empty:   bool,
     in_handled_attribute: bool,
     in_attribute_type:    bool,
+    type_seen:            bool,
+    type_supported:       bool,
     in_end_tag:           bool,
 }
 
 impl HTMLMinifierHelper {
+    /// Reset the state for a new tag.
+    #[inline]
+    fn begin_tag(&mut self) {
+        self.in_end_tag = false;
+        self.attribute_type.clear();
+        self.type_seen = false;
+        self.type_supported = true;
+    }
+
     #[inline]
     fn set_flags_by_attribute(&mut self) {
-        self.in_attribute_type =
-            self.buffer == b"type" && matches!(self.tag.as_slice(), b"script" | b"style");
-        self.in_handled_attribute = self.buffer == b"class" || self.in_attribute_type;
+        let is_type = self.buffer == b"type" && matches!(self.tag.as_slice(), b"script" | b"style");
 
-        if self.in_attribute_type {
-            self.attribute_type.clear();
+        self.in_handled_attribute = is_type || self.buffer == b"class";
+
+        // Like browsers, only the first `type` attribute counts.
+        // Its value is collected only when it can enable minification.
+        self.in_attribute_type = is_type
+            && !self.type_seen
+            && if self.tag == b"script" { self.minify_js } else { self.minify_css };
+
+        if is_type {
+            self.type_seen = true;
+        }
+    }
+
+    /// Collect a byte of the `type` attribute value, up to one byte over the limit.
+    #[inline]
+    fn push_type_byte(&mut self, e: u8) {
+        if self.in_attribute_type && self.attribute_type.len() <= MAX_TYPE_LENGTH {
+            self.attribute_type.push(e);
         }
     }
 
     #[inline]
-    fn finish_buffer(&mut self) -> Result<(), HTMLMinifierError> {
+    fn finish_buffer(&mut self) {
         if self.in_attribute_type {
-            if let Cow::Owned(attribute_value) =
-                html_escape::decode_html_entities(from_utf8(&self.attribute_type)?)
-            {
-                self.attribute_type = attribute_value.into_bytes();
-            }
-
-            if let Cow::Owned(attribute_value) =
-                from_utf8(&self.attribute_type)?.to_ascii_lowercase_cow()
-            {
-                self.attribute_type = attribute_value.into_bytes();
-            }
+            self.type_supported = is_supported_type(&self.tag, &self.attribute_type);
         }
-
-        Ok(())
     }
 
     #[inline]
@@ -165,41 +203,29 @@ impl HTMLMinifierHelper {
             b"script" => {
                 self.step_counter = 0;
 
-                match self.attribute_type.as_slice() {
-                    b"" | b"application/javascript" | b"module" if self.minify_js => {
-                        out.push_bytes(&text_bytes[*start..=p])?;
-                        *start = p + 1;
+                if self.minify_js && self.type_supported {
+                    out.push_bytes(&text_bytes[*start..=p])?;
+                    *start = p + 1;
 
-                        self.attribute_type.clear();
-                        self.buffer.clear();
+                    self.buffer.clear();
 
-                        Step::ScriptJavaScript
-                    },
-                    _ => {
-                        self.attribute_type.clear();
-
-                        Step::ScriptDefault
-                    },
+                    Step::ScriptJavaScript
+                } else {
+                    Step::ScriptDefault
                 }
             },
             b"style" => {
                 self.step_counter = 0;
 
-                match self.attribute_type.as_slice() {
-                    b"" | b"text/css" if self.minify_css => {
-                        out.push_bytes(&text_bytes[*start..=p])?;
-                        *start = p + 1;
+                if self.minify_css && self.type_supported {
+                    out.push_bytes(&text_bytes[*start..=p])?;
+                    *start = p + 1;
 
-                        self.attribute_type.clear();
-                        self.buffer.clear();
+                    self.buffer.clear();
 
-                        Step::StyleCSS
-                    },
-                    _ => {
-                        self.attribute_type.clear();
-
-                        Step::StyleDefault
-                    },
+                    Step::StyleCSS
+                } else {
+                    Step::StyleDefault
                 }
             },
             b"pre" => {
@@ -330,12 +356,10 @@ impl HTMLMinifierHelper {
             out.push(b' ')?;
         }
 
-        if self.in_attribute_type {
-            if self.quoted_value_spacing {
-                self.attribute_type.push(b' ');
-            }
-            self.attribute_type.push(e);
+        if self.quoted_value_spacing {
+            self.push_type_byte(b' ');
         }
+        self.push_type_byte(e);
 
         self.quoted_value_spacing = false;
         Ok(())
@@ -533,6 +557,8 @@ impl HTMLMinifierHelper {
         self.in_handled_attribute = false;
         self.in_attribute_type = false;
         self.in_end_tag = false;
+        self.type_seen = false;
+        self.type_supported = false;
     }
 
     /// Finish the current input and report any incomplete tag or special element.
@@ -634,8 +660,7 @@ impl HTMLMinifierHelper {
                                     out.push_bytes(&text_bytes[start..p])?;
                                     start = p + 1;
 
-                                    self.in_end_tag = false;
-                                    self.attribute_type.clear();
+                                    self.begin_tag();
                                     self.step = Step::StartTagInitial;
                                 },
                                 _ => {
@@ -662,8 +687,7 @@ impl HTMLMinifierHelper {
                                 out.push_bytes(&text_bytes[start..p])?;
                                 start = p + 1;
 
-                                self.in_end_tag = false;
-                                self.attribute_type.clear();
+                                self.begin_tag();
                                 self.step = Step::StartTagInitial;
                             } else {
                                 self.last_space = 0;
@@ -695,8 +719,7 @@ impl HTMLMinifierHelper {
                                     out.push_bytes(&text_bytes[start..p])?;
                                     start = p + 1;
 
-                                    self.in_end_tag = false;
-                                    self.attribute_type.clear();
+                                    self.begin_tag();
                                     self.step = Step::StartTagInitial;
                                 },
                                 _ => {
@@ -918,9 +941,7 @@ impl HTMLMinifierHelper {
                                     if is_whitespace(e) {
                                         start = p + 1;
                                     } else {
-                                        if self.in_attribute_type {
-                                            self.attribute_type.push(e);
-                                        }
+                                        self.push_type_byte(e);
 
                                         out.push(b'=')?;
 
@@ -938,7 +959,7 @@ impl HTMLMinifierHelper {
                                     start = p + 1;
                                 }
 
-                                self.finish_buffer()?;
+                                self.finish_buffer();
 
                                 out.push_bytes(&text_bytes[start..=p])?;
                                 start = p + 1;
@@ -968,22 +989,22 @@ impl HTMLMinifierHelper {
                             // <a a=v?
                             match e {
                                 b'>' => {
-                                    self.finish_buffer()?;
+                                    self.finish_buffer();
                                     self.step = self.end_start_tag_and_get_next_step(
                                         out, text_bytes, &mut start, p,
                                     )?;
                                 },
                                 _ => {
                                     if is_whitespace(e) {
-                                        self.finish_buffer()?;
+                                        self.finish_buffer();
 
                                         out.push_bytes(&text_bytes[start..p])?;
                                         start = p + 1;
 
                                         self.last_space = e;
                                         self.step = Step::StartTagIn;
-                                    } else if self.in_attribute_type {
-                                        self.attribute_type.push(e);
+                                    } else {
+                                        self.push_type_byte(e);
                                     }
                                 },
                             }
@@ -1174,9 +1195,7 @@ impl HTMLMinifierHelper {
                         // <a a=?
                         debug_assert_eq!(start, p);
 
-                        if self.in_attribute_type {
-                            self.attribute_type.push(e);
-                        }
+                        self.push_type_byte(e);
 
                         out.push(b'=')?;
 
@@ -1188,9 +1207,7 @@ impl HTMLMinifierHelper {
                     Step::StartTagUnquotedAttributeValue => {
                         // <a a=v?
                         // <a a=v?
-                        if self.in_attribute_type {
-                            self.attribute_type.push(e);
-                        }
+                        self.push_type_byte(e);
                     },
                     Step::TagEnd => {
                         // <a/?

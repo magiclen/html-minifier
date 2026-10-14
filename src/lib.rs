@@ -116,7 +116,7 @@ let html = html_minifier.into_html().unwrap();
 assert_eq!(b"<style>p{color:red;}</style><script> a(); </script>", html.as_slice());
 ```
 
-JavaScript minification supports an absent or empty `type`, `application/javascript`, and `module`. CSS minification supports an absent or empty `type` and `text/css`. Other types remain preserved.
+JavaScript minification supports an absent or empty `type`, `application/javascript`, `text/javascript`, and `module`. CSS minification supports an absent or empty `type` and `text/css`. Other types remain preserved.
 
 The embedded minifier has syntax limitations. JavaScript automatic semicolon insertion (ASI) can be changed by removing newlines. CSS math outside `calc`, including `min`, `max`, `clamp` and custom property expressions, can lose required spaces around `+`. Leave the relevant option disabled for such content. Preserved content still follows the control-character removal rule above.
 
@@ -124,7 +124,7 @@ The public `html_minifier::js` and `html_minifier::css` modules re-export `minif
 
 ## Errors
 
-`HTMLMinifierError` includes `UTF8Error`, `IncompleteInput`, `JSError`, `CSSError`, and `IOError`. UTF-8 is checked when a complete type attribute or embedded content must be converted to text. Byte input is otherwise preserved without requiring each chunk to be valid UTF-8. Debug formatting also supports incomplete or invalid UTF-8.
+`HTMLMinifierError` includes `UTF8Error`, `IncompleteInput`, `JSError`, `CSSError`, and `IOError`. UTF-8 is checked when embedded content must be converted to text. Byte input is otherwise preserved without requiring each chunk to be valid UTF-8. Debug formatting also supports incomplete or invalid UTF-8.
 
 The `source()` method exposes the underlying UTF-8 or I/O error. An error can leave partial output; reset the parser and use a fresh output destination before retrying a document.
 
