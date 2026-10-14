@@ -235,6 +235,16 @@ impl HTMLMinifierHelper {
         }
     }
 
+    /// Write the `<!` or `<!-` prefix that was held back while checking for a comment.
+    #[inline]
+    fn write_declaration_prefix(&self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
+        match self.step_counter {
+            0 => out.push_bytes(b"<!"),
+            1 => out.push_bytes(b"<!-"),
+            _ => Ok(()),
+        }
+    }
+
     fn write_minified(
         &mut self,
         length: usize,
@@ -589,7 +599,7 @@ impl HTMLMinifierHelper {
                                         self.last_space = b'\n';
                                     }
                                 },
-                                0x09 | 0x0B..=0x0D | 0x1C..=0x20 => {
+                                _ if is_whitespace(e) => {
                                     debug_assert_eq!(start, p);
                                     start = p + 1;
                                 },
@@ -931,9 +941,7 @@ impl HTMLMinifierHelper {
                         Step::Doctype => {
                             // <!?
                             if e == b'>' {
-                                if self.step_counter == 0 {
-                                    out.push_bytes(b"<!")?;
-                                }
+                                self.write_declaration_prefix(out)?;
 
                                 self.last_space = 0;
                                 self.step = Step::InitialRemainOneWhitespace;
@@ -959,7 +967,8 @@ impl HTMLMinifierHelper {
 
                                             start = p + 1;
 
-                                            self.step_counter = 0;
+                                            // Start at 2 so that `<!-->` and `<!--->` end the comment, as in browsers.
+                                            self.step_counter = 2;
                                             self.step = Step::Comment;
                                         },
                                         _ => {
@@ -980,32 +989,18 @@ impl HTMLMinifierHelper {
                                 start = p + 1;
                             }
 
-                            match self.step_counter {
-                                0 => {
-                                    if e == b'-' {
-                                        self.step_counter = 1;
-                                    }
+                            match e {
+                                b'-' => self.step_counter = (self.step_counter + 1).min(2),
+                                b'>' if self.step_counter == 2 => {
+                                    // The whitespace before a removed comment is already written, so the whitespace after it is skipped.
+                                    self.step = if self.remove_comments && self.last_space > 0 {
+                                        Step::InitialIgnoreWhitespace
+                                    } else {
+                                        Step::InitialRemainOneWhitespace
+                                    };
+                                    self.last_space = 0;
                                 },
-                                1 => match e {
-                                    b'-' => self.step_counter = 2,
-                                    _ => self.step_counter = 0,
-                                },
-                                2 => {
-                                    match e {
-                                        b'>' => {
-                                            if self.last_space > 0 {
-                                                self.last_space = 0;
-
-                                                self.step = Step::InitialIgnoreWhitespace;
-                                            } else {
-                                                // No need to set `last_space`.
-                                                self.step = Step::InitialRemainOneWhitespace;
-                                            }
-                                        },
-                                        _ => self.step_counter = 0,
-                                    }
-                                },
-                                _ => unreachable!(),
+                                _ => self.step_counter = 0,
                             }
                         },
                         Step::ScriptDefault
@@ -1117,9 +1112,7 @@ impl HTMLMinifierHelper {
                     },
                     Step::Doctype => {
                         // <!?
-                        if self.step_counter == 0 {
-                            out.push_bytes(b"<!")?;
-                        }
+                        self.write_declaration_prefix(out)?;
 
                         self.step_counter = 255;
                     },

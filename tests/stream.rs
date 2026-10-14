@@ -13,6 +13,10 @@ fn preserve_code(minifier: &mut HTMLMinifier) {
     minifier.set_minify_code(false);
 }
 
+fn keep_comments(minifier: &mut HTMLMinifier) {
+    minifier.set_remove_comments(false);
+}
+
 fn test_cases(cases: &[(&str, &str)], configure: fn(&mut HTMLMinifier)) {
     for &(expected, input) in cases {
         let bytes = input.as_bytes();
@@ -147,6 +151,27 @@ fn html_whitespace_keeps_tokens_separate() {
             ("<pre>a\rb\r\nc</pre>", "<pre>a\rb\r\nc</pre>"),
         ],
         default_options,
+    );
+}
+
+#[test]
+fn comments_end_like_browsers() {
+    test_cases(
+        &[
+            ("abc", "a<!-- x --->b<!-- y -->c"),
+            ("abc", "a<!-- x ---->b<!-- y -->c"),
+            ("abc", "a<!-->b<!--->c"),
+        ],
+        default_options,
+    );
+    test_cases(
+        &[
+            ("a <!-- x --> b", "a  <!-- x -->  b"),
+            ("<p>a</p> <!-- x --> <p>b</p>", "<p>a</p>  <!-- x -->  <p>b</p>"),
+            ("a\n<!-- x -->\nb", "a\n<!-- x -->\nb"),
+            ("a<!-- x --->b", "a<!-- x --->b"),
+        ],
+        keep_comments,
     );
 }
 
