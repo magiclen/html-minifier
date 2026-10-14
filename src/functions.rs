@@ -37,3 +37,8 @@ pub(crate) fn is_end_tag(e: u8, end_tag: &[u8], counter: &mut u8) -> bool {
 
     false
 }
+
+#[inline]
+pub(crate) fn ends_with_ignore_ascii_case(bytes: &[u8], suffix: &[u8]) -> bool {
+    bytes.len() >= suffix.len() && bytes[bytes.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+}

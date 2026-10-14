@@ -17,9 +17,30 @@ fn keep_comments(minifier: &mut HTMLMinifier) {
     minifier.set_remove_comments(false);
 }
 
+/// Count the sequences that change how browsers find the end of a `script` or `style` element.
+fn count_html_sequences(html: &str) -> Vec<usize> {
+    let html = html.to_ascii_lowercase();
+
+    ["<!--", "-->", "<script", "</script", "</style"]
+        .iter()
+        .map(|sequence| html.matches(sequence).count())
+        .collect()
+}
+
 fn test_cases(cases: &[(&str, &str)], configure: fn(&mut HTMLMinifier)) {
     for &(expected, input) in cases {
         let bytes = input.as_bytes();
+
+        for (input_count, output_count) in
+            count_html_sequences(input).into_iter().zip(count_html_sequences(expected))
+        {
+            assert!(output_count <= input_count, "new HTML sequence: {input:?}");
+        }
+
+        let mut minifier = HTMLMinifier::new();
+        configure(&mut minifier);
+        minifier.digest(expected).unwrap();
+        assert_eq!(expected.as_bytes(), minifier.into_html().unwrap(), "again: {input:?}");
 
         for split in 0..=bytes.len() {
             let mut minifier = HTMLMinifier::new();
@@ -292,6 +313,42 @@ fn attribute_flags_do_not_leak() {
 }
 
 #[test]
+fn css_minification_keeps_meaning() {
+    test_cases(
+        &[
+            (
+                "<style>.a :hover,.b>.c~.d{color:red;}</style>",
+                "<style>\n.a :hover, .b > .c ~ .d {\n  color: red;\n}\n</style>",
+            ),
+            (
+                "<style>a{width:calc(100% - 2 * 1px);height:clamp(1rem,2.5vw + 1rem,3rem)}</style>",
+                "<style>a { width: calc( 100% - 2 * 1px ); height: clamp(1rem, 2.5vw + 1rem, \
+                 3rem) }</style>",
+            ),
+            (
+                "<style>@media screen and (min-width:100px){.a{background:url(a.png)}}</style>",
+                "<style>@media screen and (min-width: 100px) {\n  .a { background: url( a.png) \
+                 }\n}</style>",
+            ),
+            (
+                "<style>.\\31 a:after{content:\"a  b\";--x:1px  +  2px ;color:red \
+                 !important}</style>",
+                "<style>.\\31 a:after { content: \"a  b\"; --x:  1px  +  2px ; color: red \
+                 !important }</style>",
+            ),
+            (
+                "<style>/*! keep */ a{b:c}/* @license MIT */ d{e:f}</style>",
+                "<style>/*! keep */ a { b: c } /* drop */ /* @license MIT */ d { e: f }</style>",
+            ),
+            ("<style>.a.b{}a/**/b{}</style>", "<style>.a/**/.b {} a/**/b {}</style>"),
+            ("<style>.\\31  .b{}</style>", "<style>.\\31  .b {}</style>"),
+            ("<style><!-- a{b:c}--></style>", "<style><!-- a { b: c } --></style>"),
+        ],
+        minify_embedded,
+    );
+}
+
+#[test]
 fn embedded_type_detection() {
     test_cases(
         &[
@@ -327,16 +384,21 @@ fn byte_input_debug_and_utf8_conversion() {
     let _ = format!("{minifier:?}");
     assert_eq!([0xFF], minifier.into_html().unwrap().as_slice());
 
-    for input in [b"<script>\xFF</script>".as_slice(), b"<style>\xFF</style>"] {
-        let mut minifier = HTMLMinifier::new();
-        minify_embedded(&mut minifier);
-        assert!(matches!(minifier.digest(input), Err(HTMLMinifierError::UTF8Error(_))));
-    }
-
     let mut minifier = HTMLMinifier::new();
     minify_embedded(&mut minifier);
-    minifier.digest(b"<script type='\xFF'> a(); </script>").unwrap();
-    assert_eq!(b"<script type='\xFF'> a(); </script>", minifier.into_html().unwrap().as_slice());
+    assert!(matches!(
+        minifier.digest(b"<script>\xFF</script>"),
+        Err(HTMLMinifierError::UTF8Error(_))
+    ));
+
+    for input in
+        [b"<script type='\xFF'> a(); </script>".as_slice(), b"<style>a{content:'\xFF'}</style>"]
+    {
+        let mut minifier = HTMLMinifier::new();
+        minify_embedded(&mut minifier);
+        minifier.digest(input).unwrap();
+        assert_eq!(input, minifier.into_html().unwrap().as_slice());
+    }
     test_cases(
         &[(
             "<script type='application/javascript'>alert('中文😀');</script>",
