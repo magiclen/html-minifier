@@ -112,6 +112,7 @@ pub struct HTMLMinifierHelper {
     // Temp
     quote:      u8,
     last_space: u8,
+    last_cr:    bool,
 
     // Flags
     quoted_value_spacing: bool,
@@ -241,6 +242,34 @@ impl HTMLMinifierHelper {
         } else {
             out.push_bytes(bytes)
         }
+    }
+
+    /// Check whether the byte before `p` is a CR, including the last byte of the previous chunk.
+    #[inline]
+    fn follows_cr(&self, text_bytes: &[u8], p: usize) -> bool {
+        if p == 0 { self.last_cr } else { text_bytes[p - 1] == b'\r' }
+    }
+
+    /// Write a CR as a LF and skip a LF that follows a CR, like the HTML input stream does.
+    #[inline]
+    fn normalize_line_break(
+        &mut self,
+        e: u8,
+        out: &mut impl HTMLWriter,
+        text_bytes: &[u8],
+        start: &mut usize,
+        p: usize,
+    ) -> Result<(), HTMLMinifierError> {
+        if e == b'\r' {
+            self.write_span(&text_bytes[*start..p], out)?;
+            self.write_span(b"\n", out)?;
+            *start = p + 1;
+        } else if e == b'\n' && self.follows_cr(text_bytes, p) {
+            self.write_span(&text_bytes[*start..p], out)?;
+            *start = p + 1;
+        }
+
+        Ok(())
     }
 
     /// Write the `<!` or `<!-` prefix that was held back while checking for a comment.
@@ -498,6 +527,7 @@ impl HTMLMinifierHelper {
         self.preserved_quote = 0;
         self.quote = 0;
         self.last_space = 0;
+        self.last_cr = false;
         self.quoted_value_spacing = false;
         self.quoted_value_empty = false;
         self.in_handled_attribute = false;
@@ -550,6 +580,8 @@ impl HTMLMinifierHelper {
                         self.in_end_tag = true;
                         self.step = Step::TagEnd;
                     }
+                } else {
+                    self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                 }
 
                 p += 1;
@@ -580,6 +612,8 @@ impl HTMLMinifierHelper {
                         self.in_end_tag = true;
                         self.step = Step::TagEnd;
                     }
+                } else {
+                    self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                 }
 
                 p += 1;
@@ -926,6 +960,7 @@ impl HTMLMinifierHelper {
                                 }
                             } else {
                                 self.push_quoted_value(e, out, text_bytes, &mut start, p)?;
+                                self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                             }
                         },
                         Step::StartTagUnquotedAttributeValue => {
@@ -1027,6 +1062,10 @@ impl HTMLMinifierHelper {
                                     255 => (),
                                     _ => unreachable!(),
                                 }
+
+                                if self.step_counter == 255 {
+                                    self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
+                                }
                             }
                         },
                         Step::Comment => {
@@ -1034,6 +1073,8 @@ impl HTMLMinifierHelper {
                             if self.remove_comments {
                                 debug_assert_eq!(start, p);
                                 start = p + 1;
+                            } else {
+                                self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                             }
 
                             match e {
@@ -1186,6 +1227,10 @@ impl HTMLMinifierHelper {
         }
 
         self.write_span(&text_bytes[start..p], out)?;
+
+        if let Some(&last) = text_bytes.last() {
+            self.last_cr = last == b'\r';
+        }
 
         Ok(())
     }

@@ -148,7 +148,9 @@ fn html_whitespace_keeps_tokens_separate() {
             ("<input type=text>", "<input\rtype=text>"),
             ("<input type=text>", "<input\x0Ctype=text>"),
             ("<div class='a b'>", "<div class='a\x0Cb'>"),
-            ("<pre>a\rb\r\nc</pre>", "<pre>a\rb\r\nc</pre>"),
+            ("<pre>a\nb\nc</pre>", "<pre>a\rb\r\nc</pre>"),
+            ("<textarea>a\nb</textarea>", "<textarea>a\r\nb</textarea>"),
+            ("<p title='a\nb'>", "<p title='a\r\nb'>"),
         ],
         default_options,
     );
