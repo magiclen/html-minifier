@@ -206,6 +206,9 @@ fn preserved_html_tracks_quotes_comments_and_raw_children() {
                 "<pre><style>/* </pre> */</style>a   b</pre>",
             ),
             ("<PRE>a   b</PrE><p>c d</p>", "<PRE>a   b</PrE  ><p>c   d</p>"),
+            ("<pre><img alt=Don't></pre><p>a b</p>", "<pre><img alt=Don't></pre><p>a   b</p>"),
+            ("<pre><![CDATA[it's]]></pre><p>a b</p>", "<pre><![CDATA[it's]]></pre><p>a   b</p>"),
+            ("<pre><!-->x</pre><p>a b</p>", "<pre><!-->x</pre><p>a   b</p>"),
         ],
         default_options,
     );

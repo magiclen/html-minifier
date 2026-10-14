@@ -58,9 +58,16 @@ enum PreservedStep {
     #[educe(Default)]
     Data,
     TagOpen,
+    EndTagOpen,
     TagName,
-    TagBody,
+    BeforeAttributeName,
+    AttributeName,
+    AfterAttributeName,
+    BeforeAttributeValue,
+    QuotedAttributeValue,
+    UnquotedAttributeValue,
     Declaration,
+    BogusComment,
     Comment,
     Raw,
 }
@@ -98,6 +105,7 @@ pub struct HTMLMinifierHelper {
     preserved_depth:   usize,
     preserved_counter: u8,
     preserved_end_tag: bool,
+    #[educe(Debug(method = "str_bytes_fmt"))]
     preserved_raw_end: &'static [u8],
     preserved_quote:   u8,
 
@@ -316,46 +324,47 @@ impl HTMLMinifierHelper {
     }
 
     #[inline]
-    fn end_preserved_tag(&mut self, e: u8) {
-        self.preserved_step = if e == b'>' {
-            if self.preserved_raw_end.is_empty() {
-                PreservedStep::Data
-            } else {
-                self.preserved_counter = 0;
-                PreservedStep::Raw
-            }
+    fn start_preserved_tag_name(&mut self, e: u8, end_tag: bool) {
+        self.preserved_end_tag = end_tag;
+        self.preserved_tag.clear();
+        self.preserved_tag.push(e.to_ascii_lowercase());
+        self.preserved_step = PreservedStep::TagName;
+    }
+
+    #[inline]
+    fn end_preserved_tag(&mut self) {
+        self.preserved_step = if self.preserved_raw_end.is_empty() {
+            PreservedStep::Data
         } else {
-            PreservedStep::TagBody
+            self.preserved_counter = 0;
+            PreservedStep::Raw
         };
     }
 
+    /// Follow the HTML tokenizer inside a preserved element.
+    /// Return `true` when the name of the closing tag of the preserved element ends.
     fn digest_preserved(&mut self, e: u8) -> bool {
         match self.preserved_step {
             PreservedStep::Data => {
                 if e == b'<' {
                     self.preserved_step = PreservedStep::TagOpen;
-                    self.preserved_raw_end = b"";
-                    self.preserved_quote = 0;
                 }
             },
             PreservedStep::TagOpen => match e {
-                b'/' => {
-                    self.preserved_end_tag = true;
-                    self.preserved_tag.clear();
-                    self.preserved_step = PreservedStep::TagName;
-                },
+                b'/' => self.preserved_step = PreservedStep::EndTagOpen,
                 b'!' => {
                     self.preserved_counter = 0;
                     self.preserved_step = PreservedStep::Declaration;
                 },
+                b'?' => self.preserved_step = PreservedStep::BogusComment,
                 b'<' => (),
-                _ if e.is_ascii_alphabetic() => {
-                    self.preserved_end_tag = false;
-                    self.preserved_tag.clear();
-                    self.preserved_tag.push(e.to_ascii_lowercase());
-                    self.preserved_step = PreservedStep::TagName;
-                },
+                _ if e.is_ascii_alphabetic() => self.start_preserved_tag_name(e, false),
                 _ => self.preserved_step = PreservedStep::Data,
+            },
+            PreservedStep::EndTagOpen => match e {
+                b'>' => self.preserved_step = PreservedStep::Data,
+                _ if e.is_ascii_alphabetic() => self.start_preserved_tag_name(e, true),
+                _ => self.preserved_step = PreservedStep::BogusComment,
             },
             PreservedStep::TagName => {
                 if e == b'>' || e == b'/' || is_whitespace(e) {
@@ -371,8 +380,10 @@ impl HTMLMinifierHelper {
                         }
                     }
 
-                    if !self.preserved_end_tag {
-                        self.preserved_raw_end = match self.preserved_tag.as_slice() {
+                    self.preserved_raw_end = if self.preserved_end_tag {
+                        b""
+                    } else {
+                        match self.preserved_tag.as_slice() {
                             b"script" => b"</script",
                             b"style" => b"</style",
                             b"textarea" => b"</textarea",
@@ -382,36 +393,69 @@ impl HTMLMinifierHelper {
                             b"noembed" => b"</noembed",
                             b"noframes" => b"</noframes",
                             _ => b"",
-                        };
+                        }
+                    };
+
+                    if e == b'>' {
+                        self.end_preserved_tag();
+                    } else {
+                        self.preserved_step = PreservedStep::BeforeAttributeName;
                     }
-                    self.end_preserved_tag(e);
                 } else {
                     self.preserved_tag.push(e.to_ascii_lowercase());
                 }
             },
-            PreservedStep::TagBody => {
-                if self.preserved_quote != 0 {
-                    if e == self.preserved_quote {
-                        self.preserved_quote = 0;
-                    }
-                } else if e == b'\'' || e == b'"' {
+            PreservedStep::BeforeAttributeName => match e {
+                b'>' => self.end_preserved_tag(),
+                _ if e == b'/' || is_whitespace(e) => (),
+                _ => self.preserved_step = PreservedStep::AttributeName,
+            },
+            PreservedStep::AttributeName => match e {
+                b'>' => self.end_preserved_tag(),
+                b'/' => self.preserved_step = PreservedStep::BeforeAttributeName,
+                b'=' => self.preserved_step = PreservedStep::BeforeAttributeValue,
+                _ if is_whitespace(e) => self.preserved_step = PreservedStep::AfterAttributeName,
+                _ => (),
+            },
+            PreservedStep::AfterAttributeName => match e {
+                b'>' => self.end_preserved_tag(),
+                b'/' => self.preserved_step = PreservedStep::BeforeAttributeName,
+                b'=' => self.preserved_step = PreservedStep::BeforeAttributeValue,
+                _ if is_whitespace(e) => (),
+                _ => self.preserved_step = PreservedStep::AttributeName,
+            },
+            PreservedStep::BeforeAttributeValue => match e {
+                b'>' => self.end_preserved_tag(),
+                b'"' | b'\'' => {
                     self.preserved_quote = e;
-                } else if e == b'>' {
-                    self.end_preserved_tag(e);
+                    self.preserved_step = PreservedStep::QuotedAttributeValue;
+                },
+                _ if is_whitespace(e) => (),
+                _ => self.preserved_step = PreservedStep::UnquotedAttributeValue,
+            },
+            PreservedStep::QuotedAttributeValue => {
+                if e == self.preserved_quote {
+                    self.preserved_step = PreservedStep::BeforeAttributeName;
                 }
             },
-            PreservedStep::Declaration => {
-                if e == b'-' && self.preserved_counter < 2 {
-                    self.preserved_counter += 1;
-                    if self.preserved_counter == 2 {
-                        self.preserved_counter = 0;
-                        self.preserved_step = PreservedStep::Comment;
-                    }
-                } else if e == b'>' {
+            PreservedStep::UnquotedAttributeValue => match e {
+                b'>' => self.end_preserved_tag(),
+                _ if is_whitespace(e) => self.preserved_step = PreservedStep::BeforeAttributeName,
+                _ => (),
+            },
+            PreservedStep::Declaration => match e {
+                b'-' if self.preserved_counter == 0 => self.preserved_counter = 1,
+                b'-' => {
+                    // Start at 2 so that `<!-->` and `<!--->` end the comment, as in browsers.
+                    self.preserved_counter = 2;
+                    self.preserved_step = PreservedStep::Comment;
+                },
+                b'>' => self.preserved_step = PreservedStep::Data,
+                _ => self.preserved_step = PreservedStep::BogusComment,
+            },
+            PreservedStep::BogusComment => {
+                if e == b'>' {
                     self.preserved_step = PreservedStep::Data;
-                } else {
-                    self.preserved_quote = if e == b'\'' || e == b'"' { e } else { 0 };
-                    self.preserved_step = PreservedStep::TagBody;
                 }
             },
             PreservedStep::Comment => match e {
@@ -422,8 +466,11 @@ impl HTMLMinifierHelper {
             PreservedStep::Raw => {
                 if is_end_tag(e, self.preserved_raw_end, &mut self.preserved_counter) {
                     self.preserved_raw_end = b"";
-                    self.preserved_quote = 0;
-                    self.end_preserved_tag(e);
+                    self.preserved_step = if e == b'>' {
+                        PreservedStep::Data
+                    } else {
+                        PreservedStep::BeforeAttributeName
+                    };
                 }
             },
         }
