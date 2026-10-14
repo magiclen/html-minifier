@@ -552,3 +552,15 @@ p  {
         );
     }
 }
+
+#[test]
+fn minify_sample_page() {
+    let mut html_minifier = HTMLMinifier::new();
+    html_minifier.set_minify_css(true);
+
+    html_minifier
+        .digest(include_str!("data/w3schools.com_tryhow_css_example_website.htm"))
+        .unwrap();
+
+    assert_eq!(include_str!("data/index.min.html").as_bytes(), html_minifier.get_html());
+}
