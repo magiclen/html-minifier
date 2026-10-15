@@ -85,6 +85,27 @@ impl Step {
     const fn is_embedded(self) -> bool {
         matches!(self, Step::ScriptJavaScript | Step::StyleCSS)
     }
+
+    /// Check whether the step is in raw text or preserved content, such as `<script>` and `<pre>`.
+    #[inline]
+    const fn is_special(self) -> bool {
+        matches!(
+            self,
+            Step::ScriptDefault
+                | Step::ScriptJavaScript
+                | Step::StyleDefault
+                | Step::StyleCSS
+                | Step::Pre
+                | Step::Code
+                | Step::Textarea
+        )
+    }
+}
+
+/// Check whether a byte of text content is written as it is.
+#[inline]
+const fn is_plain_text(e: u8) -> bool {
+    !(is_whitespace(e) || e == b'<' || is_ascii_control(e))
 }
 
 #[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
@@ -303,6 +324,52 @@ impl HTMLMinifierHelper {
     #[inline]
     fn finish_embedded(&mut self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
         if self.step == Step::ScriptJavaScript { self.js.finish(out) } else { self.css.finish(out) }
+    }
+
+    /// Skip the bytes of raw text or preserved content that can neither start an end tag nor need a change.
+    #[inline]
+    fn skip_content(&self, text_bytes: &[u8], mut p: usize) -> usize {
+        let plain = if matches!(self.step, Step::Pre | Step::Code) {
+            self.preserved_step == PreservedStep::Data
+        } else {
+            self.step_counter == 0
+        };
+
+        // A LF after a CR is removed, so it is not skipped.
+        if plain && !self.follows_cr(text_bytes, p) {
+            while let Some(&e) = text_bytes.get(p) {
+                if e == b'<' || e == b'\r' || is_ascii_control(e) {
+                    break;
+                }
+
+                p += 1;
+            }
+        }
+
+        p
+    }
+
+    /// Skip the rest of a quoted attribute value that needs no change after the byte at `p`.
+    #[inline]
+    fn skip_quoted_value(&self, text_bytes: &[u8], mut p: usize) -> usize {
+        // A `type` value is collected, and a LF after a CR is removed.
+        if self.in_attribute_type || text_bytes[p] == b'\r' {
+            return p;
+        }
+
+        while let Some(&e) = text_bytes.get(p + 1) {
+            if e == self.quote
+                || e == b'\r'
+                || is_ascii_control(e)
+                || (self.in_handled_attribute && is_whitespace(e))
+            {
+                break;
+            }
+
+            p += 1;
+        }
+
+        p
     }
 
     /// Leave raw text or preserved content after the name of its end tag.
@@ -661,47 +728,52 @@ impl HTMLMinifierHelper {
         let mut p = 0;
 
         while p < text_length {
+            if self.step.is_special() {
+                p = self.skip_content(text_bytes, p);
+
+                if p == text_length {
+                    break;
+                }
+
+                let e = text_bytes[p];
+
+                if matches!(self.step, Step::Pre | Step::Code) {
+                    if is_ascii_control(e) {
+                        out.push_bytes(&text_bytes[start..p])?;
+                        start = p + 1;
+                    } else if self.digest_preserved(e) {
+                        if is_whitespace(e) {
+                            out.push_bytes(&text_bytes[start..p])?;
+                            start = p + 1;
+                        }
+
+                        self.end_raw_text(e);
+                    } else {
+                        self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
+                    }
+                } else if let Some(end_tag) = self.step.end_tag() {
+                    if self.step.is_embedded() {
+                        self.digest_embedded(e, out, text_bytes, &mut start, p, end_tag)?;
+                    } else if is_ascii_control(e) {
+                        out.push_bytes(&text_bytes[start..p])?;
+                        start = p + 1;
+                    } else if is_end_tag(e, end_tag, &mut self.step_counter) {
+                        if is_whitespace(e) {
+                            out.push_bytes(&text_bytes[start..p])?;
+                            start = p + 1;
+                        }
+
+                        self.end_raw_text(e);
+                    } else {
+                        self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
+                    }
+                }
+
+                p += 1;
+                continue;
+            }
+
             let e = text_bytes[p];
-
-            if matches!(self.step, Step::Pre | Step::Code) {
-                if is_ascii_control(e) {
-                    out.push_bytes(&text_bytes[start..p])?;
-                    start = p + 1;
-                } else if self.digest_preserved(e) {
-                    if is_whitespace(e) {
-                        out.push_bytes(&text_bytes[start..p])?;
-                        start = p + 1;
-                    }
-
-                    self.end_raw_text(e);
-                } else {
-                    self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
-                }
-
-                p += 1;
-                continue;
-            }
-
-            if let Some(end_tag) = self.step.end_tag() {
-                if self.step.is_embedded() {
-                    self.digest_embedded(e, out, text_bytes, &mut start, p, end_tag)?;
-                } else if is_ascii_control(e) {
-                    out.push_bytes(&text_bytes[start..p])?;
-                    start = p + 1;
-                } else if is_end_tag(e, end_tag, &mut self.step_counter) {
-                    if is_whitespace(e) {
-                        out.push_bytes(&text_bytes[start..p])?;
-                        start = p + 1;
-                    }
-
-                    self.end_raw_text(e);
-                } else {
-                    self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
-                }
-
-                p += 1;
-                continue;
-            }
 
             if e <= 0x7F {
                 // ASCII
@@ -748,21 +820,31 @@ impl HTMLMinifierHelper {
                                 self.step = Step::StartTagInitial;
                             } else {
                                 self.last_space = 0;
+
+                                // Plain text is written as it is.
+                                while p + 1 < text_length && is_plain_text(text_bytes[p + 1]) {
+                                    p += 1;
+                                }
                             }
                         },
                         Step::InitialIgnoreWhitespace => {
                             // a ?
                             match e {
-                                b'\n' => {
-                                    debug_assert_eq!(start, p);
-                                    start = p + 1;
-
-                                    if self.last_space > 0 {
-                                        self.last_space = b'\n';
-                                    }
-                                },
                                 _ if is_whitespace(e) => {
                                     debug_assert_eq!(start, p);
+
+                                    // A line feed in the whitespace makes the kept whitespace a line feed.
+                                    loop {
+                                        if text_bytes[p] == b'\n' && self.last_space > 0 {
+                                            self.last_space = b'\n';
+                                        }
+
+                                        match text_bytes.get(p + 1) {
+                                            Some(&next) if is_whitespace(next) => p += 1,
+                                            _ => break,
+                                        }
+                                    }
+
                                     start = p + 1;
                                 },
                                 b'<' => {
@@ -902,6 +984,14 @@ impl HTMLMinifierHelper {
                                 _ => {
                                     if is_whitespace(e) {
                                         debug_assert_eq!(start, p);
+
+                                        while text_bytes
+                                            .get(p + 1)
+                                            .is_some_and(|&next| is_whitespace(next))
+                                        {
+                                            p += 1;
+                                        }
+
                                         start = p + 1;
                                     } else {
                                         out.push(b' ')?;
@@ -963,6 +1053,14 @@ impl HTMLMinifierHelper {
                                 _ => {
                                     if is_whitespace(e) {
                                         debug_assert_eq!(start, p);
+
+                                        while text_bytes
+                                            .get(p + 1)
+                                            .is_some_and(|&next| is_whitespace(next))
+                                        {
+                                            p += 1;
+                                        }
+
                                         start = p + 1;
                                     } else {
                                         out.push(b' ')?;
@@ -1039,6 +1137,8 @@ impl HTMLMinifierHelper {
                             } else {
                                 self.push_quoted_value(e, out, text_bytes, &mut start, p)?;
                                 self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
+
+                                p = self.skip_quoted_value(text_bytes, p);
                             }
                         },
                         Step::StartTagUnquotedAttributeValue => {
@@ -1189,6 +1289,11 @@ impl HTMLMinifierHelper {
                     Step::InitialRemainOneWhitespace => {
                         // a?
                         self.last_space = 0;
+
+                        // Plain text is written as it is.
+                        while p + 1 < text_length && is_plain_text(text_bytes[p + 1]) {
+                            p += 1;
+                        }
                     },
                     Step::InitialIgnoreWhitespace => {
                         // a ?
@@ -1260,6 +1365,8 @@ impl HTMLMinifierHelper {
                     },
                     Step::StartTagQuotedAttributeValue => {
                         self.push_quoted_value(e, out, text_bytes, &mut start, p)?;
+
+                        p = self.skip_quoted_value(text_bytes, p);
                     },
                     Step::StartTagUnquotedAttributeValue => {
                         // <a a=v?
