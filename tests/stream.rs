@@ -401,6 +401,7 @@ fn css_minification_keeps_meaning() {
             ("<style>.a.b{}a/**/b{}</style>", "<style>.a/**/.b {} a/**/b {}</style>"),
             ("<style>.\\31  .b{}</style>", "<style>.\\31  .b {}</style>"),
             ("<style><!-- a{b:c}--></style>", "<style><!-- a { b: c } --></style>"),
+            ("<style>a{--x: ;color:red}</style>", "<style>a { --x:  ; color: red }</style>"),
         ],
         minify_embedded,
     );
@@ -521,4 +522,149 @@ fn helper_accepts_reader_chunks_and_buffered_output() {
     helper.finish(&mut output).unwrap();
     output.flush().unwrap();
     assert_eq!("<p> 中文 😀 </p><script>a();</script> <".as_bytes(), output.into_inner().unwrap());
+}
+
+#[test]
+fn javascript_slashes_keep_regex_and_division_meaning() {
+    test_cases(
+        &[
+            (
+                "<script>debugger\n/a  b/.test(s)</script>",
+                "<script> debugger\n/a  b/.test(s) </script>",
+            ),
+            (
+                "<script>let n={valueOf(){return 2}}/ /a  b/.test(s);</script>",
+                "<script>let n = { valueOf() { return 2 } } / /a  b/.test(s);</script>",
+            ),
+            ("<script>of/ /a  b/.test(s);</script>", "<script>of / /a  b/.test(s);</script>"),
+            (
+                "<script type=module>await/a  b/;</script>",
+                "<script type=module>await /a  b/;</script>",
+            ),
+            (
+                "<script type=module>export default/a  b/;</script>",
+                "<script type=module>export default /a  b/;</script>",
+            ),
+            (
+                "<script type=module>import a from\"x\"\n/a  b/.test(s)</script>",
+                "<script type=module>import a from \"x\"\n/a  b/.test(s)</script>",
+            ),
+            (
+                "<script>var x/*!\n*/ /a  b/.test(s)</script>",
+                "<script>var x /*!\n*/ /a  b/.test(s)</script>",
+            ),
+            (
+                "<script>var x\n/*! c */ /a  b/.test(s)</script>",
+                "<script>var x\n/*! c */ /a  b/.test(s)</script>",
+            ),
+            (
+                "<script>var x<!-- c\n/a  b/.test(s)</script>",
+                "<script>var x <!-- c\n/a  b/.test(s)</script>",
+            ),
+        ],
+        default_options,
+    );
+}
+
+#[test]
+fn javascript_unicode_whitespace_keeps_token_boundaries() {
+    for whitespace in [
+        '\u{00A0}', '\u{1680}', '\u{2000}', '\u{200A}', '\u{2028}', '\u{2029}', '\u{202F}',
+        '\u{205F}', '\u{3000}', '\u{FEFF}',
+    ] {
+        test_cases(
+            &[(
+                "<script>const r=/a  b/;r.test(s)</script>",
+                &format!("<script>const r ={whitespace}/a  b/;r.test(s)</script>"),
+            )],
+            default_options,
+        );
+    }
+    test_cases(
+        &[
+            (
+                "<script>function f(){return\n/a  b/}</script>",
+                "<script>function f(){return\u{2028}/a  b/}</script>",
+            ),
+            ("<script>let 名字=é+α;</script>", "<script>let 名字 = é + α;</script>"),
+            ("<script>let a\u{200C}b=あ+K;</script>", "<script>let a\u{200C}b = あ + K;</script>"),
+        ],
+        default_options,
+    );
+}
+
+#[test]
+fn script_double_escaped_end_tags_stay_in_content() {
+    let input = "<script><!--\nlet s=\"<script></script>\";console.log(\"a  \
+                 b\");\n//-->\n</script><p>x   y</p>";
+    let expected = "<script><!--\nlet s=\"<script></script>\";console.log(\"a  \
+                    b\");\n//-->\n</script><p>x y</p>";
+    test_cases(&[(expected, input)], default_options);
+    test_cases(&[(expected, input)], preserve_embedded);
+    for input in [
+        "<script><!--\nlet s='<ScRiPt ></sCrIpTx></sCrIpT >';\n//-->\n</script>",
+        "<script><!--\nlet s='<script>-->';\na();\n</script>",
+    ] {
+        test_cases(&[(input, input)], default_options);
+        test_cases(&[(input, input)], preserve_embedded);
+    }
+    test_cases(
+        &[(
+            "<pre><script><!--\nlet s='<script></script></pre>';\n//-->\n</script>  x</pre><p>y \
+             z</p>",
+            "<pre><script><!--\nlet s='<script></script></pre>';\n//-->\n</script>  x</pre><p>y   \
+             z</p>",
+        )],
+        default_options,
+    );
+}
+
+#[test]
+fn other_raw_text_elements_keep_literal_markup() {
+    for tag in ["xmp", "iframe", "noembed", "noframes"] {
+        let input = format!("<{tag}>A<!--B--><b title='x  y'>C</b></{tag}><p>x   y</p>");
+        let expected = format!("<{tag}>A<!--B--><b title='x  y'>C</b></{tag}><p>x y</p>");
+        test_cases(&[(&expected, &input)], default_options);
+    }
+    test_cases(
+        &[
+            (
+                "<title>A<!--B--><b title='x y'>C</b></title><p>x y</p>",
+                "<title>A<!--B--><b title='x  y'>C</b></title><p>x   y</p>",
+            ),
+            ("<title>\nMy Page\n</title>", "<title>\n    My   Page\r\n</title>"),
+        ],
+        default_options,
+    );
+}
+
+#[test]
+fn unicode_tag_names_keep_attribute_values() {
+    test_cases(
+        &[("<x-中文 title=\"a  b\"></x-中文>", "<x-中文  title=\"a  b\" ></x-中文 >")],
+        default_options,
+    );
+}
+
+#[test]
+fn literal_less_than_does_not_start_a_tag() {
+    test_cases(&[("a<3", "a<3"), ("a<>b", "a<>b"), ("a<=b", "a<=b")], default_options);
+    assert_eq!("a<3", minify("a<3").unwrap());
+}
+
+#[test]
+fn bare_type_attributes_take_precedence() {
+    test_cases(
+        &[
+            (
+                "<script type type='text/plain'>a();</script>",
+                "<script type type='text/plain'> a(); </script>",
+            ),
+            (
+                "<script type type=module>let x=1;\n--> note\nx++;</script>",
+                "<script type type=module>let x = 1;\n--> note\nx++;</script>",
+            ),
+        ],
+        default_options,
+    );
 }

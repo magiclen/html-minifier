@@ -11,12 +11,11 @@ const MAX_TEMPLATE_DEPTH: usize = 256;
 const MAX_DEFERRED_LENGTH: usize = 256 * 1024;
 
 /// Keywords after which a `/` starts a regular expression.
-const REGEX_KEYWORDS: [&[u8]; 14] = [
+const REGEX_KEYWORDS: [&[u8]; 16] = [
     b"return",
     b"typeof",
     b"instanceof",
     b"in",
-    b"of",
     b"new",
     b"delete",
     b"void",
@@ -24,8 +23,11 @@ const REGEX_KEYWORDS: [&[u8]; 14] = [
     b"case",
     b"do",
     b"else",
-    b"yield",
-    b"await",
+    b"debugger",
+    b"break",
+    b"continue",
+    b"default",
+    b"extends",
 ];
 
 #[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
@@ -41,6 +43,7 @@ enum JSStep {
     Template,
     Regex,
     RegexFlags,
+    Unicode,
     /// A comment line that is kept, such as `<!--` in a classic script.
     LineKept,
     Verbatim,
@@ -67,6 +70,8 @@ enum Token {
     ControlParen,
     CloseBracket,
     CloseBrace,
+    /// A token whose following slash needs more syntax context.
+    Ambiguous,
     /// A string or a template literal.
     Literal,
     Regex,
@@ -106,6 +111,8 @@ pub(crate) struct JSMinifier {
     /// The length of the current word, up to 255.
     word_length:              u8,
     word_after_dot:           bool,
+    unicode:                  [u8; 3],
+    unicode_length:           u8,
     /// One bit for each open parenthesis, which is set for `if (`, `while (`, `for (` and `with (`.
     parens:                   u64,
     paren_depth:              u32,
@@ -279,15 +286,19 @@ impl JSMinifier {
     }
 
     #[inline]
-    fn regex_allowed(&self) -> bool {
-        matches!(
+    fn regex_allowed(&self) -> Option<bool> {
+        // A line break can end a statement by ASI, such as `var x` or `import "a"`, and then a regular expression can follow.
+        let after_statement = self.line_start
+            && (self.token == Token::Word || (self.module && self.token == Token::Literal));
+
+        if matches!(self.token, Token::CloseBrace | Token::Ambiguous) || after_statement {
+            return None;
+        }
+
+        Some(matches!(
             self.token,
-            Token::None
-                | Token::Punctuator
-                | Token::RegexKeyword
-                | Token::ControlParen
-                | Token::CloseBrace
-        )
+            Token::None | Token::Punctuator | Token::RegexKeyword | Token::ControlParen
+        ))
     }
 
     /// Decide the kind of the current word, which has ended.
@@ -304,6 +315,8 @@ impl JSMinifier {
 
         self.token = if self.word[0].is_ascii_digit() {
             Token::Number
+        } else if matches!(keyword, b"of" | b"yield" | b"await") {
+            Token::Ambiguous
         } else if REGEX_KEYWORDS.contains(&keyword) {
             Token::RegexKeyword
         } else {
@@ -313,6 +326,59 @@ impl JSMinifier {
             || (keyword == b"await" && self.after_for);
         self.after_for = keyword == b"for";
         self.word_length = 0;
+    }
+
+    #[inline]
+    fn word_byte(&mut self, e: u8, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
+        if self.word_length == 0 {
+            if self.gap {
+                self.write_gap(e, out)?;
+            }
+
+            self.word_after_dot = self.after_dot;
+            self.after_dot = false;
+            self.word[0] = e;
+        } else if self.word_length < 10 {
+            self.word[usize::from(self.word_length)] = e;
+        }
+
+        self.word_length = self.word_length.saturating_add(1);
+        self.wrote(e);
+        self.line_start = false;
+        self.html_open = 0;
+        self.html_close = 0;
+        self.hashbang = false;
+        Ok(())
+    }
+
+    /// Keep a held prefix that is not Unicode whitespace.
+    fn write_unicode(&mut self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
+        let bytes = self.unicode;
+        let length = usize::from(self.unicode_length);
+
+        for &e in &bytes[..length] {
+            self.word_byte(e, out)?;
+        }
+        out.push_bytes(&bytes[..length])?;
+        self.unicode_length = 0;
+        self.step = JSStep::Normal;
+        Ok(())
+    }
+
+    /// Check the next byte of a possible Unicode space or line break.
+    fn unicode_whitespace(&self, e: u8) -> bool {
+        match (self.unicode[0], self.unicode_length) {
+            (0xC2, 1) => e == 0xA0,
+            (0xE1, 1) => e == 0x9A,
+            (0xE2, 1) => matches!(e, 0x80 | 0x81),
+            (0xE3, 1) => e == 0x80,
+            (0xEF, 1) => e == 0xBB,
+            (0xE1 | 0xE3, 2) => e == 0x80,
+            (0xE2, 2) if self.unicode[1] == 0x80 => matches!(e, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF),
+            (0xE2, 2) => e == 0x9F,
+            (0xEF, 2) => e == 0xBF,
+            _ => false,
+        }
     }
 
     /// Find `#!` at the start, and `<!--` and `-->` at the start of a line in a classic script.
@@ -382,14 +448,14 @@ impl JSMinifier {
     }
 
     #[inline]
-    fn pop_paren(&mut self) -> bool {
+    fn pop_paren(&mut self) -> Option<bool> {
         if self.paren_depth == 0 {
-            return false;
+            return Some(false);
         }
 
         self.paren_depth -= 1;
 
-        self.paren_depth < 64 && self.parens & (1 << self.paren_depth) != 0
+        (self.paren_depth < 64).then(|| self.parens & (1 << self.paren_depth) != 0)
     }
 
     /// Track a punctuator, which has been written.
@@ -398,7 +464,7 @@ impl JSMinifier {
 
         self.control_word = false;
         self.after_for = false;
-        self.after_dot = e == b'.';
+        self.after_dot = matches!(e, b'.' | b'#');
 
         self.token = match e {
             b'"' | b'\'' => {
@@ -420,14 +486,13 @@ impl JSMinifier {
 
                 Token::Punctuator
             },
-            b')' => {
-                if self.pop_paren() {
-                    Token::ControlParen
-                } else {
-                    Token::CloseParen
-                }
+            b')' => match self.pop_paren() {
+                Some(true) => Token::ControlParen,
+                Some(false) => Token::CloseParen,
+                None => Token::Ambiguous,
             },
             b']' => Token::CloseBracket,
+            b'.' if self.token == Token::Number => Token::Ambiguous,
             b'{' => {
                 self.brace_depth = self.brace_depth.saturating_add(1);
 
@@ -497,25 +562,16 @@ impl JSMinifier {
                                 self.line_start = true;
                             }
                         }
-                    } else if is_word_byte(e) {
-                        if self.word_length == 0 {
-                            if self.gap {
-                                self.write_gap(e, out)?;
-                            }
-
-                            self.word_after_dot = self.after_dot;
-                            self.after_dot = false;
-                            self.word[0] = e;
-                        } else if self.word_length < 10 {
-                            self.word[usize::from(self.word_length)] = e;
+                    } else if matches!(e, 0xC2 | 0xE1..=0xE3 | 0xEF) {
+                        if run < p {
+                            out.push_bytes(&bytes[run..p])?;
                         }
-
-                        self.word_length = self.word_length.saturating_add(1);
-                        self.wrote(e);
-                        self.line_start = false;
-                        self.html_open = 0;
-                        self.html_close = 0;
-                        self.hashbang = false;
+                        run = p + 1;
+                        self.unicode[0] = e;
+                        self.unicode_length = 1;
+                        self.step = JSStep::Unicode;
+                    } else if is_word_byte(e) {
+                        self.word_byte(e, out)?;
                     } else {
                         self.end_word();
 
@@ -558,7 +614,13 @@ impl JSMinifier {
                     },
                     _ => {
                         // The `/` is a division or the start of a regular expression.
-                        let regex = self.regex_allowed();
+                        let Some(regex) = self.regex_allowed() else {
+                            // Keep the rest when a slash needs syntax context that is not tracked.
+                            self.write_comment_gap(out)?;
+                            out.push(b'/')?;
+                            self.step = JSStep::Verbatim;
+                            return out.push_bytes(&bytes[p..]);
+                        };
 
                         if self.gap {
                             self.write_gap(b'/', out)?;
@@ -627,9 +689,9 @@ impl JSMinifier {
 
                     if self.comment_star && e == b'/' {
                         // The token before the comment stays the latest token.
-                        self.line_start = self.comment_newline;
+                        self.line_start |= self.comment_newline;
                         self.step = JSStep::Normal;
-                    } else if matches!(e, b'\n' | b'\r') {
+                    } else if matches!(e, b'\n' | b'\r') || self.completes_separator(e) {
                         self.comment_newline = true;
                     }
 
@@ -703,13 +765,39 @@ impl JSMinifier {
                     }
                 },
                 JSStep::RegexFlags => {
-                    if is_word_byte(e) {
+                    if is_word_byte(e) && e < 0x80 {
                         self.wrote(e);
                     } else {
                         self.token = Token::Regex;
                         self.step = JSStep::Normal;
 
                         continue;
+                    }
+                },
+                JSStep::Unicode => {
+                    if !self.unicode_whitespace(e) {
+                        self.write_unicode(out)?;
+                        run = p;
+                        continue;
+                    }
+
+                    self.unicode[usize::from(self.unicode_length)] = e;
+                    self.unicode_length += 1;
+                    run = p + 1;
+
+                    if self.unicode[0] == 0xC2 || self.unicode_length == 3 {
+                        let newline = self.unicode[0] == 0xE2
+                            && self.unicode[1] == 0x80
+                            && matches!(e, 0xA8 | 0xA9);
+                        self.end_word();
+                        self.gap = true;
+                        self.gap_newline |= newline;
+                        self.line_start |= newline;
+                        self.html_open = 0;
+                        self.html_close = 0;
+                        self.hashbang = false;
+                        self.unicode_length = 0;
+                        self.step = JSStep::Normal;
                     }
                 },
                 JSStep::LineKept => {
@@ -764,7 +852,9 @@ impl JSMinifier {
 
     /// Hold the input after `<!--` until it is clear whether `<script` follows.
     fn defer(&mut self, bytes: &[u8], out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
-        for (p, &e) in bytes.iter().enumerate() {
+        let length = bytes.len().min(MAX_DEFERRED_LENGTH + 1 - self.deferred.len());
+
+        for (p, &e) in bytes[..length].iter().enumerate() {
             let e = e.to_ascii_lowercase();
 
             self.raw_script = match self.raw_script {
@@ -782,10 +872,11 @@ impl JSMinifier {
             }
         }
 
-        self.deferred.extend_from_slice(bytes);
+        self.deferred.extend_from_slice(&bytes[..length]);
 
         if self.deferred.len() > MAX_DEFERRED_LENGTH {
             self.write_deferred(out)?;
+            return out.push_bytes(&bytes[length..]);
         }
 
         Ok(())
@@ -820,6 +911,7 @@ impl JSMinifier {
         }
 
         match self.step {
+            JSStep::Unicode => self.write_unicode(out)?,
             JSStep::Slash => {
                 // A `/` at the end is a division or an unterminated regular expression.
                 if self.gap {
@@ -839,5 +931,30 @@ impl JSMinifier {
         self.reset(self.module);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{JSMinifier, MAX_DEFERRED_LENGTH};
+
+    #[test]
+    fn large_chunks_keep_deferred_memory_bounded() {
+        let mut input = b"<!--\n".to_vec();
+        input.resize(MAX_DEFERRED_LENGTH * 4, b' ');
+
+        for chunk_size in [input.len(), 4096] {
+            let mut minifier = JSMinifier::default();
+            minifier.reset(false);
+            let mut out = Vec::new();
+
+            for chunk in input.chunks(chunk_size) {
+                minifier.feed(chunk, &mut out).unwrap();
+            }
+            minifier.finish(&mut out).unwrap();
+
+            assert_eq!(input, out);
+            assert!(minifier.deferred.capacity() <= 2 * (MAX_DEFERRED_LENGTH + 1));
+        }
     }
 }

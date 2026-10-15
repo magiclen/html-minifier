@@ -3,12 +3,17 @@ use std::str::from_utf8;
 use educe::Educe;
 
 use crate::{
-    HTMLMinifierError, HTMLWriter, css_minifier::CSSMinifier, functions::*, js_minifier::JSMinifier,
+    HTMLMinifierError, HTMLWriter, css_minifier::CSSMinifier, functions::*,
+    js_minifier::JSMinifier, script_data::ScriptData,
 };
 
 /// The longest `type` attribute value that is collected.
 /// A longer value is never a supported type.
 const MAX_TYPE_LENGTH: usize = 256;
+
+/// The longest tag or attribute name that is collected.
+/// A longer name never matches a name that is checked.
+const MAX_NAME_LENGTH: usize = 16;
 
 /// Check whether the `type` attribute value of a `script` or `style` element enables minification.
 /// Return `Some(true)` for a JavaScript module.
@@ -41,6 +46,23 @@ fn embedded_type(tag: &[u8], value: &[u8]) -> Option<bool> {
     }
 }
 
+/// Get the end tag that ends the raw text of an element, such as `</script` for `script`.
+fn raw_text_end_tag(tag: &[u8]) -> Option<&'static [u8]> {
+    let end_tag: &'static [u8] = match tag {
+        b"script" => b"</script",
+        b"style" => b"</style",
+        b"textarea" => b"</textarea",
+        b"title" => b"</title",
+        b"xmp" => b"</xmp",
+        b"iframe" => b"</iframe",
+        b"noembed" => b"</noembed",
+        b"noframes" => b"</noframes",
+        _ => return None,
+    };
+
+    Some(end_tag)
+}
+
 #[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
 #[educe(Default)]
 enum Step {
@@ -68,15 +90,17 @@ enum Step {
     Pre,
     Code,
     Textarea,
+    RawText,
 }
 
 impl Step {
     #[inline]
-    const fn end_tag(self) -> Option<&'static [u8]> {
+    const fn end_tag(self, raw_end: &'static [u8]) -> Option<&'static [u8]> {
         match self {
             Step::ScriptDefault | Step::ScriptJavaScript => Some(b"</script"),
             Step::StyleDefault | Step::StyleCSS => Some(b"</style"),
             Step::Textarea => Some(b"</textarea"),
+            Step::RawText => Some(raw_end),
             _ => None,
         }
     }
@@ -98,6 +122,7 @@ impl Step {
                 | Step::Pre
                 | Step::Code
                 | Step::Textarea
+                | Step::RawText
         )
     }
 }
@@ -106,6 +131,14 @@ impl Step {
 #[inline]
 const fn is_plain_text(e: u8) -> bool {
     !(is_whitespace(e) || e == b'<' || is_ascii_control(e))
+}
+
+/// Collect a byte of a tag or attribute name, up to one byte over the limit.
+#[inline]
+fn push_name_byte(name: &mut Vec<u8>, e: u8) {
+    if name.len() <= MAX_NAME_LENGTH {
+        name.push(e);
+    }
 }
 
 #[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
@@ -158,8 +191,9 @@ pub struct HTMLMinifierHelper {
     held:           [u8; 8],
 
     // Embedded code
-    css: CSSMinifier,
-    js:  JSMinifier,
+    css:         CSSMinifier,
+    js:          JSMinifier,
+    script_data: ScriptData,
 
     // Steps
     step:              Step,
@@ -169,7 +203,7 @@ pub struct HTMLMinifierHelper {
     preserved_counter: u8,
     preserved_end_tag: bool,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    preserved_raw_end: &'static [u8],
+    raw_end:           &'static [u8],
     preserved_quote:   u8,
 
     // Temp
@@ -245,6 +279,7 @@ impl HTMLMinifierHelper {
         let step = match self.tag.as_slice() {
             b"script" => {
                 self.step_counter = 0;
+                self.script_data.reset();
 
                 if self.minify_js && self.type_supported {
                     out.push_bytes(&text_bytes[*start..=p])?;
@@ -292,7 +327,13 @@ impl HTMLMinifierHelper {
             _ => {
                 self.last_space = 0;
 
-                Step::InitialRemainOneWhitespace
+                if let Some(end_tag) = raw_text_end_tag(&self.tag) {
+                    self.step_counter = 0;
+                    self.raw_end = end_tag;
+                    Step::RawText
+                } else {
+                    Step::InitialRemainOneWhitespace
+                }
             },
         };
 
@@ -326,19 +367,32 @@ impl HTMLMinifierHelper {
         if self.step == Step::ScriptJavaScript { self.js.finish(out) } else { self.css.finish(out) }
     }
 
+    /// Check whether the step is in a `title` element, whose whitespace is collapsed.
+    #[inline]
+    fn in_title(&self) -> bool {
+        self.step == Step::RawText && self.raw_end == b"</title"
+    }
+
     /// Skip the bytes of raw text or preserved content that can neither start an end tag nor need a change.
     #[inline]
     fn skip_content(&self, text_bytes: &[u8], mut p: usize) -> usize {
+        let script = matches!(self.step, Step::ScriptDefault | Step::ScriptJavaScript);
+        let title = self.in_title();
         let plain = if matches!(self.step, Step::Pre | Step::Code) {
             self.preserved_step == PreservedStep::Data
         } else {
-            self.step_counter == 0
+            self.step_counter == 0 && (!script || self.script_data.can_skip())
         };
 
         // A LF after a CR is removed, so it is not skipped.
         if plain && !self.follows_cr(text_bytes, p) {
             while let Some(&e) = text_bytes.get(p) {
-                if e == b'<' || e == b'\r' || is_ascii_control(e) {
+                if e == b'<'
+                    || e == b'\r'
+                    || is_ascii_control(e)
+                    || (script && e == b'-' && self.script_data.tracks_dash())
+                    || (title && is_whitespace(e))
+                {
                     break;
                 }
 
@@ -405,7 +459,7 @@ impl HTMLMinifierHelper {
 
         let matched = usize::from(self.step_counter);
 
-        if is_end_tag(e, end_tag, &mut self.step_counter) {
+        if self.script_data.ends(e, end_tag, &mut self.step_counter) {
             self.finish_embedded(out)?;
             out.push_bytes(&self.held[..matched])?;
 
@@ -510,7 +564,7 @@ impl HTMLMinifierHelper {
         self.preserved_counter = 0;
         self.preserved_end_tag = false;
         self.preserved_quote = 0;
-        self.preserved_raw_end = b"";
+        self.raw_end = b"";
         self.preserved_tag.clear();
     }
 
@@ -524,7 +578,7 @@ impl HTMLMinifierHelper {
 
     #[inline]
     fn end_preserved_tag(&mut self) {
-        self.preserved_step = if self.preserved_raw_end.is_empty() {
+        self.preserved_step = if self.raw_end.is_empty() {
             PreservedStep::Data
         } else {
             self.preserved_counter = 0;
@@ -571,21 +625,15 @@ impl HTMLMinifierHelper {
                         }
                     }
 
-                    self.preserved_raw_end = if self.preserved_end_tag {
+                    self.raw_end = if self.preserved_end_tag {
                         b""
                     } else {
-                        match self.preserved_tag.as_slice() {
-                            b"script" => b"</script",
-                            b"style" => b"</style",
-                            b"textarea" => b"</textarea",
-                            b"title" => b"</title",
-                            b"xmp" => b"</xmp",
-                            b"iframe" => b"</iframe",
-                            b"noembed" => b"</noembed",
-                            b"noframes" => b"</noframes",
-                            _ => b"",
-                        }
+                        raw_text_end_tag(&self.preserved_tag).unwrap_or_default()
                     };
+
+                    if self.raw_end == b"</script" {
+                        self.script_data.reset();
+                    }
 
                     if e == b'>' {
                         self.end_preserved_tag();
@@ -593,7 +641,7 @@ impl HTMLMinifierHelper {
                         self.preserved_step = PreservedStep::BeforeAttributeName;
                     }
                 } else {
-                    self.preserved_tag.push(e.to_ascii_lowercase());
+                    push_name_byte(&mut self.preserved_tag, e.to_ascii_lowercase());
                 }
             },
             PreservedStep::BeforeAttributeName => match e {
@@ -655,8 +703,8 @@ impl HTMLMinifierHelper {
                 _ => self.preserved_counter = 0,
             },
             PreservedStep::Raw => {
-                if is_end_tag(e, self.preserved_raw_end, &mut self.preserved_counter) {
-                    self.preserved_raw_end = b"";
+                if self.script_data.ends(e, self.raw_end, &mut self.preserved_counter) {
+                    self.raw_end = b"";
                     self.preserved_step = if e == b'>' {
                         PreservedStep::Data
                     } else {
@@ -683,10 +731,11 @@ impl HTMLMinifierHelper {
         self.preserved_step = PreservedStep::default();
         self.css.reset();
         self.js.reset(false);
+        self.script_data.reset();
         self.preserved_depth = 0;
         self.preserved_counter = 0;
         self.preserved_end_tag = false;
-        self.preserved_raw_end = b"";
+        self.raw_end = b"";
         self.preserved_quote = 0;
         self.quote = 0;
         self.last_space = 0;
@@ -729,7 +778,14 @@ impl HTMLMinifierHelper {
 
         while p < text_length {
             if self.step.is_special() {
-                p = self.skip_content(text_bytes, p);
+                let next = self.skip_content(text_bytes, p);
+
+                // The bytes that are skipped in a title are not whitespace.
+                if next > p && self.in_title() {
+                    self.last_space = 0;
+                }
+
+                p = next;
 
                 if p == text_length {
                     break;
@@ -751,20 +807,30 @@ impl HTMLMinifierHelper {
                     } else {
                         self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                     }
-                } else if let Some(end_tag) = self.step.end_tag() {
+                } else if let Some(end_tag) = self.step.end_tag(self.raw_end) {
                     if self.step.is_embedded() {
                         self.digest_embedded(e, out, text_bytes, &mut start, p, end_tag)?;
                     } else if is_ascii_control(e) {
                         out.push_bytes(&text_bytes[start..p])?;
                         start = p + 1;
-                    } else if is_end_tag(e, end_tag, &mut self.step_counter) {
+                    } else if self.script_data.ends(e, end_tag, &mut self.step_counter) {
                         if is_whitespace(e) {
                             out.push_bytes(&text_bytes[start..p])?;
                             start = p + 1;
                         }
 
                         self.end_raw_text(e);
+                    } else if is_whitespace(e) && self.in_title() {
+                        if self.last_space > 0 {
+                            // Only the first whitespace of a run is kept in a title.
+                            out.push_bytes(&text_bytes[start..p])?;
+                            start = p + 1;
+                        } else {
+                            self.last_space = e;
+                            self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
+                        }
                     } else {
+                        self.last_space = 0;
                         self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                     }
                 }
@@ -891,13 +957,6 @@ impl HTMLMinifierHelper {
                                     self.step_counter = 0;
                                     self.step = Step::Doctype;
                                 },
-                                b'>' => {
-                                    // <>
-                                    start = p + 1;
-
-                                    self.last_space = 0;
-                                    self.step = Step::InitialRemainOneWhitespace;
-                                },
                                 _ => {
                                     out.push(b'<')?;
 
@@ -908,11 +967,15 @@ impl HTMLMinifierHelper {
                                         self.last_space = e;
 
                                         self.step = Step::InitialIgnoreWhitespace;
-                                    } else {
+                                    } else if e.is_ascii_alphabetic() {
                                         self.tag.clear();
                                         self.tag.push(e.to_ascii_lowercase());
 
                                         self.step = Step::StartTag;
+                                    } else {
+                                        self.last_space = 0;
+                                        self.step = Step::InitialRemainOneWhitespace;
+                                        continue;
                                     }
                                 },
                             }
@@ -962,7 +1025,7 @@ impl HTMLMinifierHelper {
                                             out, text_bytes, &mut start, p,
                                         )?;
                                     },
-                                    _ => self.tag.push(e.to_ascii_lowercase()),
+                                    _ => push_name_byte(&mut self.tag, e.to_ascii_lowercase()),
                                 }
                             }
                         },
@@ -1006,6 +1069,10 @@ impl HTMLMinifierHelper {
                         },
                         Step::StartTagAttributeName => {
                             // <a a?
+                            if matches!(e, b'/' | b'>' | b'=') || is_whitespace(e) {
+                                self.set_flags_by_attribute();
+                            }
+
                             match e {
                                 b'/' => self.step = Step::TagEnd,
                                 b'>' => {
@@ -1017,8 +1084,6 @@ impl HTMLMinifierHelper {
                                     out.push_bytes(&text_bytes[start..p])?;
                                     start = p + 1;
 
-                                    self.set_flags_by_attribute();
-
                                     self.step = Step::StartTagAttributeValueInitial;
                                 },
                                 _ => {
@@ -1028,7 +1093,7 @@ impl HTMLMinifierHelper {
 
                                         self.step = Step::StartTagAttributeNameWaitingValue;
                                     } else {
-                                        self.buffer.push(e.to_ascii_lowercase());
+                                        push_name_byte(&mut self.buffer, e.to_ascii_lowercase());
                                     }
                                 },
                             }
@@ -1045,8 +1110,6 @@ impl HTMLMinifierHelper {
                                 b'=' => {
                                     out.push_bytes(&text_bytes[start..p])?;
                                     start = p + 1;
-
-                                    self.set_flags_by_attribute();
 
                                     self.step = Step::StartTagAttributeValueInitial;
                                 },
@@ -1194,7 +1257,17 @@ impl HTMLMinifierHelper {
                                 },
                                 _ => {
                                     out.push_bytes(&text_bytes[start..p])?;
-                                    start = p + 1;
+
+                                    if self.in_end_tag {
+                                        start = p + 1;
+                                    } else {
+                                        // A `/` that `>` does not follow is ignored, so attributes can follow it.
+                                        start = p;
+
+                                        self.last_space = 0;
+                                        self.step = Step::StartTagIn;
+                                        continue;
+                                    }
                                 },
                             }
                         },
@@ -1275,7 +1348,8 @@ impl HTMLMinifierHelper {
                         | Step::StyleCSS
                         | Step::Pre
                         | Step::Code
-                        | Step::Textarea => unreachable!(),
+                        | Step::Textarea
+                        | Step::RawText => unreachable!(),
                     }
                 }
             } else {
@@ -1324,13 +1398,8 @@ impl HTMLMinifierHelper {
                         self.last_space = 0;
                         self.step = Step::InitialRemainOneWhitespace;
                     },
-                    Step::StartTag | Step::EndTag => {
-                        // <a?
-                        // </a?
-                        // To `InitialRemainOneWhitespace`.
-                        self.last_space = 0;
-                        self.step = Step::InitialRemainOneWhitespace;
-                    },
+                    Step::StartTag => push_name_byte(&mut self.tag, e),
+                    Step::EndTag => (),
                     Step::StartTagIn => {
                         // <a ?
                         out.push(b' ')?;
@@ -1342,7 +1411,7 @@ impl HTMLMinifierHelper {
                     },
                     Step::StartTagAttributeName => {
                         // <a a?
-                        self.buffer.push(e);
+                        push_name_byte(&mut self.buffer, e);
                     },
                     Step::StartTagAttributeNameWaitingValue => {
                         // <a a ?
@@ -1377,7 +1446,16 @@ impl HTMLMinifierHelper {
                         // <a/?
                         // </a ?
                         out.push_bytes(&text_bytes[start..p])?;
-                        start = p + 1;
+
+                        if self.in_end_tag {
+                            start = p + 1;
+                        } else {
+                            start = p;
+
+                            self.last_space = 0;
+                            self.step = Step::StartTagIn;
+                            continue;
+                        }
                     },
                     Step::Doctype => {
                         // <!?
@@ -1400,7 +1478,8 @@ impl HTMLMinifierHelper {
                     | Step::Code
                     | Step::Textarea
                     | Step::ScriptJavaScript
-                    | Step::StyleCSS => unreachable!(),
+                    | Step::StyleCSS
+                    | Step::RawText => unreachable!(),
                 }
             }
 

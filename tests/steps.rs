@@ -51,6 +51,8 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
         let mut html_minifier = HTMLMinifier::new();
         html_minifier.set_remove_comments(false);
         html_minifier.set_minify_code(false);
+        html_minifier.set_minify_js(false);
+        html_minifier.set_minify_css(false);
 
         html_minifier.digest(test).unwrap();
         assert_eq!(expect.as_bytes(), html_minifier.get_html(), "case {}", index);
@@ -62,6 +64,8 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
         let mut html_minifier = HTMLMinifier::new();
         html_minifier.set_remove_comments(false);
         html_minifier.set_minify_code(false);
+        html_minifier.set_minify_js(false);
+        html_minifier.set_minify_css(false);
 
         for c in test.chars() {
             html_minifier.digest(c.encode_utf8(&mut buffer)).unwrap();
@@ -74,6 +78,8 @@ fn test_disabled_all_options(cases: &[(&str, &str)]) {
         let mut html_minifier = HTMLMinifier::new();
         html_minifier.set_remove_comments(false);
         html_minifier.set_minify_code(false);
+        html_minifier.set_minify_js(false);
+        html_minifier.set_minify_css(false);
 
         let mut chars = test.chars();
 
@@ -115,7 +121,7 @@ fn initial_ignore_whitespace() {
 #[test]
 fn start_tag_initial() {
     const CASES: [(&str, &str); 6] =
-        [("", "<>"), ("123", "123<>"), ("<a", "<a"), ("<", "< "), ("<", "<\t"), ("", "<!")];
+        [("<>", "<>"), ("123<>", "123<>"), ("<a", "<a"), ("<", "< "), ("<", "<\t"), ("", "<!")];
 
     test_enabled_all_options(&CASES);
 }
@@ -231,7 +237,7 @@ fn end_tag() {
 #[test]
 fn tag_end() {
     const CASES: [(&str, &str); 4] = [
-        ("<aaa/", "<aaa/123"),
+        ("<aaa/ 123", "<aaa/123"),
         ("<aaa/>", "<aaa/>"),
         ("</aaa", "</aaa 123"),
         ("</aaa>", "</aaa 123>"),
@@ -448,14 +454,14 @@ fn width_2_end_tag_initial() {
 
 #[test]
 fn width_2_start_tag() {
-    const CASES: [(&str, &str); 1] = [("<aé >", "<aé >")];
+    const CASES: [(&str, &str); 1] = [("<aé>", "<aé >")];
 
     test_enabled_all_options(&CASES);
 }
 
 #[test]
 fn width_2_end_tag() {
-    const CASES: [(&str, &str); 1] = [("</aé >", "</aé >")];
+    const CASES: [(&str, &str); 1] = [("</aé>", "</aé >")];
 
     test_enabled_all_options(&CASES);
 }
@@ -505,7 +511,7 @@ fn width_2_start_tag_unquoted_attribute_value() {
 #[test]
 fn width_2_tag_end() {
     const CASES: [(&str, &str); 3] =
-        [("<aaa/", "<aaa/ééé"), ("</aaa", "</aaa ééé"), ("</aaa>", "</aaa ééé>")];
+        [("<aaa/ ééé", "<aaa/ééé"), ("</aaa", "</aaa ééé"), ("</aaa>", "</aaa ééé>")];
 
     test_enabled_all_options(&CASES);
 }
@@ -612,14 +618,14 @@ fn width_n_end_tag_initial() {
 
 #[test]
 fn width_n_start_tag() {
-    const CASES: [(&str, &str); 1] = [("<a中 >", "<a中 >")];
+    const CASES: [(&str, &str); 1] = [("<a中>", "<a中 >")];
 
     test_enabled_all_options(&CASES);
 }
 
 #[test]
 fn width_n_end_tag() {
-    const CASES: [(&str, &str); 1] = [("</a中 >", "</a中 >")];
+    const CASES: [(&str, &str); 1] = [("</a中>", "</a中 >")];
 
     test_enabled_all_options(&CASES);
 }
@@ -669,7 +675,7 @@ fn width_n_start_tag_unquoted_attribute_value() {
 #[test]
 fn width_n_tag_end() {
     const CASES: [(&str, &str); 3] =
-        [("<aaa/", "<aaa/中中中"), ("</aaa", "</aaa 中中中"), ("</aaa>", "</aaa 中中中>")];
+        [("<aaa/ 中中中", "<aaa/中中中"), ("</aaa", "</aaa 中中中"), ("</aaa>", "</aaa 中中中>")];
 
     test_enabled_all_options(&CASES);
 }

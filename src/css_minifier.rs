@@ -71,6 +71,8 @@ pub(crate) struct CSSMinifier {
     hex_value:      u32,
     /// Whether the previous byte of a comment is `*`.
     comment_star:   bool,
+    /// Whether whitespace has been removed at the start of a custom property value.
+    custom_space:   bool,
     custom_depth:   u32,
     custom_quote:   u8,
     /// 1 after `/`, 2 in a comment, and 3 in a comment after `*`.
@@ -255,7 +257,10 @@ impl CSSMinifier {
                     self.step = CSSStep::String;
                 },
                 b'(' if url => self.step = CSSStep::URLStart,
-                b':' if self.custom_name => self.step = CSSStep::CustomStart,
+                b':' if self.custom_name => {
+                    self.custom_space = false;
+                    self.step = CSSStep::CustomStart;
+                },
                 _ => (),
             }
 
@@ -442,7 +447,14 @@ impl CSSMinifier {
                         }
 
                         run = p + 1;
+                        self.custom_space = true;
                     } else {
+                        // Old browsers drop an empty value without whitespace, such as `--x:;`, so one space stays.
+                        if self.custom_space && matches!(e, b';' | b'}' | b'!') {
+                            out.push(b' ')?;
+                            self.wrote(b' ');
+                        }
+
                         self.custom_depth = 0;
                         self.custom_quote = 0;
                         self.custom_comment = 0;

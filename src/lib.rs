@@ -13,6 +13,8 @@ HTML is minified by the following rules:
 * The inner HTML of all elements is minified except for the following elements:
   * `<pre>`
   * `<textarea>`
+  * `<title>` (only whitespace is collapsed)
+  * `<xmp>`, `<iframe>`, `<noembed>` and `<noframes>`
   * `<code>` (optionally, minified by default)
   * `<style>` (preserved if CSS minification is disabled or its `type` is unsupported)
   * `<script>` (preserved if JavaScript minification is disabled or its `type` is unsupported)
@@ -117,7 +119,7 @@ assert_eq!(b"<style>p{color:red;}</style><script> a(); </script>", html.as_slice
 
 JavaScript minification supports an absent or empty `type`, `application/javascript`, `text/javascript`, and `module`. CSS minification supports an absent or empty `type` and `text/css`. Other types remain preserved.
 
-JavaScript and CSS minification only removes comments and whitespace, so the code keeps its meaning. JavaScript line breaks that automatic semicolon insertion (ASI) needs are kept. Block comments whose text starts with `!` or contains `@license` or `@preserve` are kept. Preserved content still follows the control-character removal rule above.
+JavaScript and CSS minification only removes comments and whitespace, so the code keeps its meaning. JavaScript line breaks that automatic semicolon insertion (ASI) needs are kept. When the meaning of a slash is unclear, the rest of that script is preserved. Block comments whose text starts with `!` or contains `@lic` (such as `@license`) or `@preserve` are kept. Preserved content still follows the control-character removal rule above.
 
 ## Errors
 
@@ -164,6 +166,7 @@ mod functions;
 mod html_minifier_helper;
 mod html_writer;
 mod js_minifier;
+mod script_data;
 
 use educe::Educe;
 pub use errors::*;
