@@ -1,6 +1,6 @@
 [package]
 name = "html-minifier"
-version = "5.0.2"
+version = "6.0.0"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2024"
 rust-version = "1.89"
@@ -8,7 +8,7 @@ repository = "https://github.com/magiclen/html-minifier"
 homepage = "https://magiclen.org/html-minifier"
 keywords = ["html", "minify", "script", "style"]
 categories = ["encoding"]
-description = "This library minifies streaming HTML and optionally minifies embedded JavaScript and CSS while preserving pre and textarea content."
+description = "This library minifies streaming HTML, including embedded JavaScript and CSS, while preserving pre and textarea content."
 license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
