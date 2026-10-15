@@ -1,7 +1,6 @@
 use std::str::from_utf8;
 
 use educe::Educe;
-pub use minifier::{css, js};
 
 use crate::{
     HTMLMinifierError, HTMLWriter, css_minifier::CSSMinifier, functions::*, js_minifier::JSMinifier,

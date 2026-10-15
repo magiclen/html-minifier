@@ -16,7 +16,7 @@ HTML is minified by the following rules:
   * `<code>` (optionally, minified by default)
   * `<style>` (preserved by default, and always preserved if its `type` is unsupported)
   * `<script>` (preserved by default, and always preserved if its `type` is unsupported)
-* Optional JavaScript and CSS minification uses [minifier](https://crates.io/crates/minifier).
+* Embedded JavaScript and CSS can be minified by removing comments and whitespace.
 
 The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
 
@@ -118,15 +118,13 @@ assert_eq!(b"<style>p{color:red;}</style><script> a(); </script>", html.as_slice
 
 JavaScript minification supports an absent or empty `type`, `application/javascript`, `text/javascript`, and `module`. CSS minification supports an absent or empty `type` and `text/css`. Other types remain preserved.
 
-JavaScript and CSS minification only removes comments and whitespace, so the code keeps its meaning. JavaScript line breaks that automatic semicolon insertion (ASI) needs are kept. Preserved content still follows the control-character removal rule above.
-
-The public `html_minifier::js` and `html_minifier::css` modules re-export `minifier` 0.4. Both `js::minify` and `css::minify` return `Result`; callers using these modules must handle errors.
+JavaScript and CSS minification only removes comments and whitespace, so the code keeps its meaning. JavaScript line breaks that automatic semicolon insertion (ASI) needs are kept. Block comments whose text starts with `!` or contains `@license` or `@preserve` are kept. Preserved content still follows the control-character removal rule above.
 
 ## Errors
 
-`HTMLMinifierError` includes `UTF8Error`, `IncompleteInput`, `JSError`, `CSSError`, and `IOError`. Byte input is preserved without requiring each chunk to be valid UTF-8. Debug formatting also supports incomplete or invalid UTF-8.
+`HTMLMinifierError` is non-exhaustive and includes `IncompleteInput` and `IOError`. Byte input is preserved without requiring each chunk to be valid UTF-8. Debug formatting also supports incomplete or invalid UTF-8.
 
-The `source()` method exposes the underlying UTF-8 or I/O error. An error can leave partial output; reset the parser and use a fresh output destination before retrying a document.
+`IOError` shows the message of the underlying I/O error, and `source()` returns the source of that error. An error can leave partial output; reset the parser and use a fresh output destination before retrying a document.
 
 ## Write HTML to a Writer
 
@@ -296,7 +294,7 @@ pub fn minify<S: AsRef<str>>(html: S) -> Result<String, HTMLMinifierError> {
 
     let mut minified_html = String::with_capacity(html.len());
 
-    // The input is UTF-8, and the helper changes only ASCII bytes or adds valid text.
+    // The input is UTF-8, and the helper only removes ASCII bytes or whole comments and only adds ASCII bytes between characters.
     let out = unsafe { minified_html.as_mut_vec() };
     minifier.digest(html, out)?;
     minifier.finish(out)?;
