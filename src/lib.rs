@@ -118,19 +118,19 @@ assert_eq!(b"<style>p{color:red;}</style><script> a(); </script>", html.as_slice
 
 JavaScript minification supports an absent or empty `type`, `application/javascript`, `text/javascript`, and `module`. CSS minification supports an absent or empty `type` and `text/css`. Other types remain preserved.
 
-The embedded JavaScript minifier has syntax limitations. JavaScript automatic semicolon insertion (ASI) can be changed by removing newlines. Leave the option disabled for such content. CSS minification only removes comments and whitespace, so the CSS keeps its meaning. Preserved content still follows the control-character removal rule above.
+JavaScript and CSS minification only removes comments and whitespace, so the code keeps its meaning. JavaScript line breaks that automatic semicolon insertion (ASI) needs are kept. Preserved content still follows the control-character removal rule above.
 
 The public `html_minifier::js` and `html_minifier::css` modules re-export `minifier` 0.4. Both `js::minify` and `css::minify` return `Result`; callers using these modules must handle errors.
 
 ## Errors
 
-`HTMLMinifierError` includes `UTF8Error`, `IncompleteInput`, `JSError`, `CSSError`, and `IOError`. UTF-8 is checked when embedded JavaScript must be converted to text. Byte input is otherwise preserved without requiring each chunk to be valid UTF-8. Debug formatting also supports incomplete or invalid UTF-8.
+`HTMLMinifierError` includes `UTF8Error`, `IncompleteInput`, `JSError`, `CSSError`, and `IOError`. Byte input is preserved without requiring each chunk to be valid UTF-8. Debug formatting also supports incomplete or invalid UTF-8.
 
 The `source()` method exposes the underlying UTF-8 or I/O error. An error can leave partial output; reset the parser and use a fresh output destination before retrying a document.
 
 ## Write HTML to a Writer
 
-Use `HTMLMinifierHelper` to supply an output writer. Wrap a file in `BufWriter` to combine small writes. Optional JavaScript minification still buffers each script until its closing tag.
+Use `HTMLMinifierHelper` to supply an output writer. Wrap a file in `BufWriter` to combine small writes.
 
 ```rust,no_run
 use html_minifier::HTMLMinifierHelper;

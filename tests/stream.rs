@@ -313,6 +313,59 @@ fn attribute_flags_do_not_leak() {
 }
 
 #[test]
+fn javascript_minification_keeps_meaning() {
+    test_cases(
+        &[
+            (
+                "<script>window.dataLayer=window.dataLayer||[];function \
+                 gtag(){dataLayer.push(arguments);}\ngtag('js',new \
+                 Date());gtag('config','G-XXXX');</script>",
+                "<script>\n  window.dataLayer = window.dataLayer || [];\n  function \
+                 gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n\n  \
+                 gtag('config', 'G-XXXX');\n</script>",
+            ),
+            (
+                "<script>console.log(1)\nconsole.log(2)</script>",
+                "<script>\nconsole.log(1)\nconsole.log(2)\n</script>",
+            ),
+            (
+                "<script>a=b+ +c- -d;e=1 .toString();f=a++ +b</script>",
+                "<script>a = b + +c - -d; e = 1 .toString(); f = a++ + b</script>",
+            ),
+            (
+                "<script>if(a)/x  y/.test(s);z=a/b/c;s='  ';</script>",
+                "<script>if (a) /x  y/.test(s); z = a / b / c; s = '  ';</script>",
+            ),
+            (
+                "<script>t=`a ${b+`c ${d}`} e`;</script>",
+                "<script>t = `a ${ b + `c ${ d }` } e`;</script>",
+            ),
+            (
+                "<script>/*! keep */\nx=1;y=2\nz=3</script>",
+                "<script>/*! keep */\n// drop\nx = 1; /* drop */ y = 2 /* line\n break */ z = \
+                 3</script>",
+            ),
+            ("<script><!--\nalert(1)</script>", "<script><!--\nalert(1)\n//--></script>"),
+            (
+                "<script><!--\ndocument.write(\"<script>a()</scr\" + \"ipt>\")\n  //-->\n</script>",
+                "<script><!--\ndocument.write(\"<script>a()</scr\" + \"ipt>\")\n  //-->\n</script>",
+            ),
+            (
+                "<script>if(a< script)b=a< /x/.test(c)</script>",
+                "<script>if (a < script) b = a < /x/.test(c)</script>",
+            ),
+            (
+                "<script type=module>import a from\"a\"\nexport default a</script>",
+                "<script type=module>import a from \"a\"\nexport default a</script>",
+            ),
+            ("<script>x=1\n--> note\ny=2</script>", "<script>x = 1\n--> note\ny = 2</script>"),
+            ("<script>/*! a */ /*! b */x()</script>", "<script>/*! a */ /*! b */x()</script>"),
+        ],
+        minify_embedded,
+    );
+}
+
+#[test]
 fn css_minification_keeps_meaning() {
     test_cases(
         &[
@@ -384,16 +437,11 @@ fn byte_input_debug_and_utf8_conversion() {
     let _ = format!("{minifier:?}");
     assert_eq!([0xFF], minifier.into_html().unwrap().as_slice());
 
-    let mut minifier = HTMLMinifier::new();
-    minify_embedded(&mut minifier);
-    assert!(matches!(
-        minifier.digest(b"<script>\xFF</script>"),
-        Err(HTMLMinifierError::UTF8Error(_))
-    ));
-
-    for input in
-        [b"<script type='\xFF'> a(); </script>".as_slice(), b"<style>a{content:'\xFF'}</style>"]
-    {
+    for input in [
+        b"<script>a('\xFF');</script>".as_slice(),
+        b"<script type='\xFF'> a(); </script>",
+        b"<style>a{content:'\xFF'}</style>",
+    ] {
         let mut minifier = HTMLMinifier::new();
         minify_embedded(&mut minifier);
         minifier.digest(input).unwrap();

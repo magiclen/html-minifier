@@ -12,24 +12,33 @@ use crate::{
 const MAX_TYPE_LENGTH: usize = 256;
 
 /// Check whether the `type` attribute value of a `script` or `style` element enables minification.
-fn is_supported_type(tag: &[u8], value: &[u8]) -> bool {
+/// Return `Some(true)` for a JavaScript module.
+fn embedded_type(tag: &[u8], value: &[u8]) -> Option<bool> {
     // Every supported type is ASCII, and decoding entities never removes a non-ASCII byte.
     if value.len() > MAX_TYPE_LENGTH || !value.is_ascii() {
-        return false;
+        return None;
     }
 
-    let types: &[&[u8]] = if tag == b"script" {
-        &[b"", b"application/javascript", b"text/javascript", b"module"]
+    let decoded;
+    let value = if value.contains(&b'&') {
+        decoded = html_escape::decode_html_entities(from_utf8(value).unwrap_or_default());
+
+        decoded.as_bytes()
     } else {
-        &[b"", b"text/css"]
+        value
     };
 
-    if value.contains(&b'&') {
-        let decoded = html_escape::decode_html_entities(from_utf8(value).unwrap_or_default());
-
-        types.iter().any(|t| decoded.as_bytes().eq_ignore_ascii_case(t))
+    if tag == b"script" {
+        if value.eq_ignore_ascii_case(b"module") {
+            Some(true)
+        } else {
+            [b"".as_slice(), b"application/javascript", b"text/javascript"]
+                .iter()
+                .any(|t| value.eq_ignore_ascii_case(t))
+                .then_some(false)
+        }
     } else {
-        types.iter().any(|t| value.eq_ignore_ascii_case(t))
+        (value.is_empty() || value.eq_ignore_ascii_case(b"text/css")).then_some(false)
     }
 }
 
@@ -153,6 +162,7 @@ pub struct HTMLMinifierHelper {
     in_attribute_type:    bool,
     type_seen:            bool,
     type_supported:       bool,
+    type_module:          bool,
     in_end_tag:           bool,
 }
 
@@ -164,6 +174,7 @@ impl HTMLMinifierHelper {
         self.attribute_type.clear();
         self.type_seen = false;
         self.type_supported = true;
+        self.type_module = false;
     }
 
     #[inline]
@@ -194,7 +205,10 @@ impl HTMLMinifierHelper {
     #[inline]
     fn finish_buffer(&mut self) {
         if self.in_attribute_type {
-            self.type_supported = is_supported_type(&self.tag, &self.attribute_type);
+            let embedded_type = embedded_type(&self.tag, &self.attribute_type);
+
+            self.type_supported = embedded_type.is_some();
+            self.type_module = embedded_type == Some(true);
         }
     }
 
@@ -214,7 +228,7 @@ impl HTMLMinifierHelper {
                     out.push_bytes(&text_bytes[*start..=p])?;
                     *start = p + 1;
 
-                    self.js.reset();
+                    self.js.reset(self.type_module);
 
                     Step::ScriptJavaScript
                 } else {
@@ -600,7 +614,7 @@ impl HTMLMinifierHelper {
         self.preserved_tag.clear();
         self.preserved_step = PreservedStep::default();
         self.css.reset();
-        self.js.reset();
+        self.js.reset(false);
         self.preserved_depth = 0;
         self.preserved_counter = 0;
         self.preserved_end_tag = false;
@@ -616,6 +630,7 @@ impl HTMLMinifierHelper {
         self.in_end_tag = false;
         self.type_seen = false;
         self.type_supported = false;
+        self.type_module = false;
     }
 
     /// Finish the current input and report any incomplete tag or special element.
