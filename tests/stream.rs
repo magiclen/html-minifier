@@ -204,6 +204,42 @@ fn comments_end_like_browsers() {
 }
 
 #[test]
+fn removed_comments_keep_character_reference_boundaries() {
+    test_cases(
+        &[
+            ("<p>&co<!---->py;</p>", "<p>&co<!-- note -->py;</p>"),
+            ("<p>&copy<!---->;</p>", "<p>&copy<!-- note -->;</p>"),
+            ("<p>&#65<!---->0;</p>", "<p>&#65<!-- note -->0;</p>"),
+            ("<p>&#x26<!---->0;</p>", "<p>&#x26<!-- note -->0;</p>"),
+            ("<p>&co<!---->py;</p>", "<p>&co<!-- first --><!-- second -->py;</p>"),
+            ("<p>&co甲py;</p>", "<p>&co甲<!-- note -->py;</p>"),
+            (
+                "<p>&copy; &amp; &#65; &#x26;</p>",
+                "<p>&copy;<!-- a --> &amp;<!-- b --> &#65;<!-- c --> &#x26;<!-- d --></p>",
+            ),
+        ],
+        default_options,
+    );
+}
+
+#[test]
+fn removed_comment_chains_keep_one_whitespace() {
+    test_cases(
+        &[
+            ("<p>a b</p>", "<p>a <!-- first --> <!-- second --> b</p>"),
+            ("<p>a b</p>", "<p>a <!-- first --><!-- second --> <!-- third --> b</p>"),
+            ("<p>a\nb</p>", "<p>a\n<!-- first -->\n<!-- second -->\n b</p>"),
+            ("<p>a b</p>", "<p>a <!-- first -->\n<!-- second --> b</p>"),
+            ("<p>甲 乙</p>", "<p>甲 <!-- first --> <!-- second --> 乙</p>"),
+            ("<p>a b</p>", "<p>a<!-- first --> <!-- second --> b</p>"),
+            ("<p>ab</p>", "<p>a<!-- first --><!-- second -->b</p>"),
+            ("<p>a <b>x</b> b</p>", "<p>a <!-- first --><b>x</b> <!-- second --> b</p>"),
+        ],
+        default_options,
+    );
+}
+
+#[test]
 fn preserved_html_tracks_quotes_comments_and_raw_children() {
     test_cases(
         &[
@@ -434,6 +470,54 @@ fn embedded_type_detection() {
         ],
         minify_embedded,
     );
+}
+
+#[test]
+fn embedded_types_keep_their_original_whitespace() {
+    test_cases(
+        &[
+            (
+                "<script type='  application/javascript  '>a();</script>",
+                "<script type='  application/javascript  '> a(); </script>",
+            ),
+            (
+                "<script type='\tText/JavaScript\n'>a();</script>",
+                "<script type='\tText/JavaScript\n'> a(); </script>",
+            ),
+            (
+                "<script type='&#32;text&#47;javascript&#9;'>a();</script>",
+                "<script type='&#32;text&#47;javascript&#9;'> a(); </script>",
+            ),
+            (
+                "<script type='mo&#100;ule'>a();</script>",
+                "<script type='mo&#100;ule'> a(); </script>",
+            ),
+            ("<style type>p{color:red;}</style>", "<style type=''> p { color: red; } </style>"),
+        ],
+        default_options,
+    );
+
+    for input in [
+        "<script type=' module '> a(); </script>",
+        "<script type=' importmap '> { \"imports\": {} } </script>",
+        "<script type=' speculationrules '> { \"prefetch\": [] } </script>",
+        "<script type='   '> a(); </script>",
+        "<script type='&#32;module&#32;'> a(); </script>",
+        "<script type='&#32;&#9;'> a(); </script>",
+        "<style type=' text/css '> p { color: red; } </style>",
+        "<style type='   '> p { color: red; } </style>",
+        "<style type='&#32;text&#47;css&#32;'> p { color: red; } </style>",
+    ] {
+        test_cases(&[(input, input)], default_options);
+    }
+
+    for input in [
+        "<script type='  application/javascript  '> a(); </script>",
+        "<script type=' module '> a(); </script>",
+        "<style type=' text/css '> p { color: red; } </style>",
+    ] {
+        test_cases(&[(input, input)], preserve_embedded);
+    }
 }
 
 #[test]

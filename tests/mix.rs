@@ -294,7 +294,19 @@ p  {
             .unwrap();
 
         assert_eq!(
-            r#"<style type="text/css">h1{color:blue;font-family:verdana;font-size:300%;}p{color:red;font-family:courier;font-size:160%;}</style>"#.as_bytes(),
+            r#"<style type="  text/css  ">
+h1 {
+    color: blue;
+    font-family: verdana;
+    font-size: 300%;
+}
+p  {
+    color: red;
+    font-family: courier;
+    font-size: 160%;
+}
+        </style>"#
+                .as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -331,7 +343,7 @@ fn minify_javascript() {
             .unwrap();
 
         assert_eq!(
-            r#"<script type="application/javascript">alert('1234!');</script>"#.as_bytes(),
+            r#"<script type="  application/javascript  ">alert('1234!');</script>"#.as_bytes(),
             html_minifier.get_html()
         );
     }
@@ -502,7 +514,7 @@ fn preserve_unsupported_script_type() {
             .unwrap();
 
         assert_eq!(
-            r#"<script type="application/ecmascript">
+            r#"<script type="  application/ecmascript  ">
         alert('1234!')    ;
 
         </script>"#
@@ -535,7 +547,7 @@ p  {
             .unwrap();
 
         assert_eq!(
-            r#"<style type="text/x-scss">
+            r#"<style type="  text/x-scss  ">
 h1 {
     color: blue;
     font-family: verdana;

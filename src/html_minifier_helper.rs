@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// The longest `type` attribute value that is collected.
-/// A longer value is never a supported type.
+/// Longer values are kept without minification.
 const MAX_TYPE_LENGTH: usize = 256;
 
 /// The longest tag or attribute name that is collected.
@@ -36,10 +36,11 @@ fn embedded_type(tag: &[u8], value: &[u8]) -> Option<bool> {
         if value.eq_ignore_ascii_case(b"module") {
             Some(true)
         } else {
-            [b"".as_slice(), b"application/javascript", b"text/javascript"]
-                .iter()
-                .any(|t| value.eq_ignore_ascii_case(t))
-                .then_some(false)
+            (value.is_empty()
+                || [b"application/javascript".as_slice(), b"text/javascript"]
+                    .iter()
+                    .any(|t| value.trim_ascii().eq_ignore_ascii_case(t)))
+            .then_some(false)
         }
     } else {
         (value.is_empty() || value.eq_ignore_ascii_case(b"text/css")).then_some(false)
@@ -130,7 +131,7 @@ impl Step {
 /// Check whether a byte of text content is written as it is.
 #[inline]
 const fn is_plain_text(e: u8) -> bool {
-    !(is_whitespace(e) || e == b'<' || is_ascii_control(e))
+    !(is_whitespace(e) || matches!(e, b'<' | b'&') || is_ascii_control(e))
 }
 
 /// Collect a byte of a tag or attribute name, up to one byte over the limit.
@@ -166,7 +167,7 @@ enum PreservedStep {
 #[educe(Debug, Default(new))]
 pub struct HTMLMinifierHelper {
     #[educe(Default = true)]
-    /// Remove HTML comments.
+    /// Remove HTML comments, keeping empty comments where text could form a character reference.
     pub remove_comments: bool,
     #[educe(Default = true)]
     /// Minify the content in the `code` element.
@@ -212,6 +213,10 @@ pub struct HTMLMinifierHelper {
     last_cr:    bool,
 
     // Flags
+    /// Whether the text ends with an unfinished character reference.
+    reference_pending:    bool,
+    /// Whether the whitespace before removed comments has already been written.
+    text_space_written:   bool,
     quoted_value_spacing: bool,
     quoted_value_empty:   bool,
     in_handled_attribute: bool,
@@ -223,6 +228,31 @@ pub struct HTMLMinifierHelper {
 }
 
 impl HTMLMinifierHelper {
+    #[inline]
+    fn skip_plain_text(&mut self, text_bytes: &[u8], mut p: usize) -> usize {
+        let e = text_bytes[p];
+
+        self.reference_pending =
+            e == b'&' || (self.reference_pending && (e.is_ascii_alphanumeric() || e == b'#'));
+        self.text_space_written = false;
+
+        while let Some(&next) = text_bytes.get(p + 1) {
+            let skip = if self.reference_pending {
+                next.is_ascii_alphanumeric() || next == b'#'
+            } else {
+                is_plain_text(next)
+            };
+
+            if !skip {
+                break;
+            }
+
+            p += 1;
+        }
+
+        p
+    }
+
     /// Reset the state for a new tag.
     #[inline]
     fn begin_tag(&mut self) {
@@ -237,7 +267,7 @@ impl HTMLMinifierHelper {
     fn set_flags_by_attribute(&mut self) {
         let is_type = self.buffer == b"type" && matches!(self.tag.as_slice(), b"script" | b"style");
 
-        self.in_handled_attribute = is_type || self.buffer == b"class";
+        self.in_handled_attribute = self.buffer == b"class";
 
         // Like browsers, only the first `type` attribute counts.
         // Its value is collected only when it can enable minification.
@@ -740,6 +770,8 @@ impl HTMLMinifierHelper {
         self.quote = 0;
         self.last_space = 0;
         self.last_cr = false;
+        self.reference_pending = false;
+        self.text_space_written = false;
         self.quoted_value_spacing = false;
         self.quoted_value_empty = false;
         self.in_handled_attribute = false;
@@ -862,9 +894,11 @@ impl HTMLMinifierHelper {
                                     if is_whitespace(e) {
                                         debug_assert_eq!(start, p);
                                         start = p + 1;
+                                        self.reference_pending = false;
                                     } else {
                                         self.last_space = 0;
                                         self.step = Step::InitialRemainOneWhitespace;
+                                        p = self.skip_plain_text(text_bytes, p);
                                     }
                                 },
                             }
@@ -876,6 +910,7 @@ impl HTMLMinifierHelper {
                                 start = p + 1;
 
                                 self.last_space = e;
+                                self.reference_pending = false;
 
                                 self.step = Step::InitialIgnoreWhitespace;
                             } else if e == b'<' {
@@ -887,10 +922,7 @@ impl HTMLMinifierHelper {
                             } else {
                                 self.last_space = 0;
 
-                                // Plain text is written as it is.
-                                while p + 1 < text_length && is_plain_text(text_bytes[p + 1]) {
-                                    p += 1;
-                                }
+                                p = self.skip_plain_text(text_bytes, p);
                             }
                         },
                         Step::InitialIgnoreWhitespace => {
@@ -898,6 +930,7 @@ impl HTMLMinifierHelper {
                             match e {
                                 _ if is_whitespace(e) => {
                                     debug_assert_eq!(start, p);
+                                    self.reference_pending = false;
 
                                     // A line feed in the whitespace makes the kept whitespace a line feed.
                                     loop {
@@ -921,6 +954,9 @@ impl HTMLMinifierHelper {
                                         out.push(b' ')?;
                                     }
 
+                                    self.text_space_written |= self.last_space > 0;
+                                    self.last_space = 0;
+
                                     out.push_bytes(&text_bytes[start..p])?;
                                     start = p + 1;
 
@@ -936,6 +972,7 @@ impl HTMLMinifierHelper {
 
                                     self.last_space = 0;
                                     self.step = Step::InitialRemainOneWhitespace;
+                                    p = self.skip_plain_text(text_bytes, p);
                                 },
                             }
                         },
@@ -946,6 +983,9 @@ impl HTMLMinifierHelper {
                             match e {
                                 b'/' => {
                                     start = p + 1;
+
+                                    self.reference_pending = false;
+                                    self.text_space_written = false;
 
                                     self.in_end_tag = true;
                                     self.step = Step::EndTagInitial;
@@ -959,6 +999,9 @@ impl HTMLMinifierHelper {
                                 },
                                 _ => {
                                     out.push(b'<')?;
+
+                                    self.reference_pending = false;
+                                    self.text_space_written = false;
 
                                     if is_whitespace(e) {
                                         out.push_bytes(&text_bytes[start..p])?;
@@ -1276,6 +1319,9 @@ impl HTMLMinifierHelper {
                             if e == b'>' {
                                 self.write_declaration_prefix(out)?;
 
+                                self.reference_pending = false;
+                                self.text_space_written = false;
+
                                 self.last_space = 0;
                                 self.step = Step::InitialRemainOneWhitespace;
                             } else {
@@ -1289,6 +1335,9 @@ impl HTMLMinifierHelper {
                                         _ => {
                                             out.push_bytes(b"<!")?;
 
+                                            self.reference_pending = false;
+                                            self.text_space_written = false;
+
                                             self.step_counter = 255;
                                         },
                                     },
@@ -1296,7 +1345,13 @@ impl HTMLMinifierHelper {
                                         b'-' => {
                                             if !self.remove_comments {
                                                 out.push_bytes(b"<!--")?;
+                                                self.text_space_written = false;
+                                            } else if self.reference_pending {
+                                                // Keep a boundary so that text on both sides cannot form a character reference.
+                                                out.push_bytes(b"<!---->")?;
                                             }
+
+                                            self.reference_pending = false;
 
                                             start = p + 1;
 
@@ -1306,6 +1361,9 @@ impl HTMLMinifierHelper {
                                         },
                                         _ => {
                                             out.push_bytes(b"<!-")?;
+
+                                            self.reference_pending = false;
+                                            self.text_space_written = false;
 
                                             self.step_counter = 255;
                                         },
@@ -1332,7 +1390,7 @@ impl HTMLMinifierHelper {
                                 b'-' => self.step_counter = (self.step_counter + 1).min(2),
                                 b'>' if self.step_counter == 2 => {
                                     // The whitespace before a removed comment is already written, so the whitespace after it is skipped.
-                                    self.step = if self.remove_comments && self.last_space > 0 {
+                                    self.step = if self.remove_comments && self.text_space_written {
                                         Step::InitialIgnoreWhitespace
                                     } else {
                                         Step::InitialRemainOneWhitespace
@@ -1359,15 +1417,13 @@ impl HTMLMinifierHelper {
                         // ?
                         self.last_space = 0;
                         self.step = Step::InitialRemainOneWhitespace;
+                        p = self.skip_plain_text(text_bytes, p);
                     },
                     Step::InitialRemainOneWhitespace => {
                         // a?
                         self.last_space = 0;
 
-                        // Plain text is written as it is.
-                        while p + 1 < text_length && is_plain_text(text_bytes[p + 1]) {
-                            p += 1;
-                        }
+                        p = self.skip_plain_text(text_bytes, p);
                     },
                     Step::InitialIgnoreWhitespace => {
                         // a ?
@@ -1379,6 +1435,7 @@ impl HTMLMinifierHelper {
 
                         self.last_space = 0;
                         self.step = Step::InitialRemainOneWhitespace;
+                        p = self.skip_plain_text(text_bytes, p);
                     },
                     Step::StartTagInitial => {
                         // <?
@@ -1386,6 +1443,9 @@ impl HTMLMinifierHelper {
                         debug_assert_eq!(start, p);
 
                         out.push(b'<')?;
+
+                        self.reference_pending = false;
+                        self.text_space_written = false;
 
                         self.last_space = 0;
                         self.step = Step::InitialRemainOneWhitespace;
@@ -1460,6 +1520,9 @@ impl HTMLMinifierHelper {
                     Step::Doctype => {
                         // <!?
                         self.write_declaration_prefix(out)?;
+
+                        self.reference_pending = false;
+                        self.text_space_written = false;
 
                         self.step_counter = 255;
                     },

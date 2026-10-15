@@ -7,6 +7,7 @@ HTML is minified by the following rules:
 
 * ASCII control characters (0x00-0x08, 0x0B, 0x0E-0x1F, 0x7F) are always removed.
 * Comments can be optionally removed. (removed by default)
+  Empty comments are kept when needed to preserve character reference boundaries.
 * Unnecessary whitespace is removed.
 * HTML whitespace (spaces, tabs, line feeds, carriage returns and form feeds) is collapsed to a single space or line feed where applicable.
 * Empty attribute values are collapsed. (e.g `<input readonly="">` => `<input readonly>` )
@@ -90,14 +91,14 @@ let mut html_minifier = HTMLMinifier::new();
 html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 html_minifier.finish().unwrap();
 
-assert_eq!("<script type='application/javascript'>alert('Hello!');</script>".as_bytes(), html_minifier.get_html());
+assert_eq!("<script type='  application/javascript '>alert('Hello!');</script>".as_bytes(), html_minifier.get_html());
 ```
 
 ## Options and Embedded Code
 
 | Setter | Default | Effect |
 | --- | --- | --- |
-| `set_remove_comments` | `true` | Remove HTML comments outside preserved content. |
+| `set_remove_comments` | `true` | Remove HTML comments outside preserved content, except empty comments needed to preserve character reference boundaries. |
 | `set_minify_code` | `true` | Minify HTML inside `<code>` elements. |
 | `set_minify_js` | `true` | Minify supported JavaScript content. |
 | `set_minify_css` | `true` | Minify supported CSS content. |
@@ -117,7 +118,15 @@ let html = html_minifier.into_html().unwrap();
 assert_eq!(b"<style>p{color:red;}</style><script> a(); </script>", html.as_slice());
 ```
 
-JavaScript minification supports an absent or empty `type`, `application/javascript`, `text/javascript`, and `module`. CSS minification supports an absent or empty `type` and `text/css`. Other types remain preserved.
+JavaScript minification supports an absent or empty `type`, `application/javascript`, `text/javascript`, and `module`.
+Leading and trailing ASCII whitespace is allowed only around the two JavaScript MIME types.
+CSS minification supports an absent or empty `type` and `text/css` without added whitespace.
+Type matching ignores ASCII case and decodes character references.
+The original attribute value is preserved.
+Other types keep their content unchanged.
+
+Removing a comment must not join text into a different character reference.
+For example, `&co<!-- note -->py;` becomes `&co<!---->py;` so its text stays `&copy;` instead of becoming `©`.
 
 JavaScript and CSS minification only removes comments and whitespace, so the code keeps its meaning. JavaScript line breaks that automatic semicolon insertion (ASI) needs are kept. When the meaning of a slash is unclear, the rest of that script is preserved. Block comments whose text starts with `!` or contains `@lic` (such as `@license`) or `@preserve` are kept. Preserved content still follows the control-character removal rule above.
 
@@ -186,6 +195,7 @@ pub struct HTMLMinifier {
 
 impl HTMLMinifier {
     /// Set whether to remove HTML comments.
+    /// Empty comments are kept when needed to preserve character reference boundaries.
     #[inline]
     pub fn set_remove_comments(&mut self, remove_comments: bool) {
         self.helper.remove_comments = remove_comments;
