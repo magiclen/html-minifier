@@ -1,7 +1,7 @@
 /*!
 # HTML Minifier
 
-This library minifies HTML as you generate or read it. It preserves the content of `<pre>` and `<textarea>` elements and can also preserve `<code>` content. JavaScript and CSS minification is optional and disabled by default.
+This library minifies HTML as you generate or read it. It preserves the content of `<pre>` and `<textarea>` elements and can also preserve `<code>` content. Embedded JavaScript and CSS are also minified by removing comments and whitespace.
 
 HTML is minified by the following rules:
 
@@ -14,9 +14,9 @@ HTML is minified by the following rules:
   * `<pre>`
   * `<textarea>`
   * `<code>` (optionally, minified by default)
-  * `<style>` (preserved by default, and always preserved if its `type` is unsupported)
-  * `<script>` (preserved by default, and always preserved if its `type` is unsupported)
-* Embedded JavaScript and CSS can be minified by removing comments and whitespace.
+  * `<style>` (preserved if CSS minification is disabled or its `type` is unsupported)
+  * `<script>` (preserved if JavaScript minification is disabled or its `type` is unsupported)
+* Embedded JavaScript and CSS are minified by removing comments and whitespace.
 
 The original (non-minified) HTML doesn't need to be completely generated before using this library because this library doesn't do any deserialization to create DOMs.
 
@@ -84,7 +84,6 @@ assert_eq!(b"<pre>   Hello  world!   </pre>", html_minifier.get_html());
 use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
-html_minifier.set_minify_js(true);
 
 html_minifier.digest("<script type='  application/javascript '>   alert('Hello!')    ;   </script>").unwrap();
 html_minifier.finish().unwrap();
@@ -98,18 +97,18 @@ assert_eq!("<script type='application/javascript'>alert('Hello!');</script>".as_
 | --- | --- | --- |
 | `set_remove_comments` | `true` | Remove HTML comments outside preserved content. |
 | `set_minify_code` | `true` | Minify HTML inside `<code>` elements. |
-| `set_minify_js` | `false` | Minify supported JavaScript content. |
-| `set_minify_css` | `false` | Minify supported CSS content. |
+| `set_minify_js` | `true` | Minify supported JavaScript content. |
+| `set_minify_css` | `true` | Minify supported CSS content. |
 
 Each option has a corresponding `get_` method. `HTMLMinifierHelper` exposes the same options as public fields. Set options before digesting the document. `reset` clears parsing state and output while keeping options and allocated capacity; the helper leaves its external writer unchanged.
 
-JavaScript and CSS can be enabled independently:
+JavaScript and CSS can be disabled independently:
 
 ```rust
 use html_minifier::HTMLMinifier;
 
 let mut html_minifier = HTMLMinifier::new();
-html_minifier.set_minify_css(true);
+html_minifier.set_minify_js(false);
 html_minifier.digest("<style> p { color: red; } </style><script> a(); </script>").unwrap();
 
 let html = html_minifier.into_html().unwrap();
@@ -285,7 +284,7 @@ impl HTMLMinifier {
     }
 }
 
-/// Minify HTML.
+/// Minify HTML with the default options, which also minify embedded JavaScript and CSS.
 #[inline]
 pub fn minify<S: AsRef<str>>(html: S) -> Result<String, HTMLMinifierError> {
     let mut minifier = HTMLMinifierHelper::new();

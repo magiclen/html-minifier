@@ -9,6 +9,11 @@ fn minify_embedded(minifier: &mut HTMLMinifier) {
     minifier.set_minify_css(true);
 }
 
+fn preserve_embedded(minifier: &mut HTMLMinifier) {
+    minifier.set_minify_js(false);
+    minifier.set_minify_css(false);
+}
+
 fn preserve_code(minifier: &mut HTMLMinifier) {
     minifier.set_minify_code(false);
 }
@@ -80,7 +85,7 @@ fn unquoted_paths_and_special_elements() {
                 "<style media=screen>.a { color: red; }</style>",
             ),
         ],
-        default_options,
+        preserve_embedded,
     );
     test_cases(&[("<code class=x>a  b</code>", "<code class=x>a  b</code>")], preserve_code);
     test_cases(
@@ -109,31 +114,31 @@ fn unicode_class_spacing() {
 }
 
 #[test]
-fn embedded_content_is_preserved_by_default() {
+fn embedded_content_is_minified_by_default() {
     test_cases(
         &[
             (
                 "<script>console.log(1)\nconsole.log(2)</script>",
-                "<script>console.log(1)\nconsole.log(2)</script>",
+                "<script>\n  console.log(1)\n  console.log(2)\n</script>",
             ),
             (
                 "<style>.a{width:min(100% + 1px,50px)}</style>",
-                "<style>.a{width:min(100% + 1px,50px)}</style>",
+                "<style>.a { width: min(100% + 1px, 50px) }</style>",
             ),
-            ("<script>const x = `中文  😀`;</script>", "<script>const x = `中文  😀`;</script>"),
+            ("<script>const x=`中文  😀`;</script>", "<script>const x = `中文  😀`;</script>"),
         ],
         default_options,
     );
-    assert_eq!("<script> a(); </script>", minify("<script> a(); </script>").unwrap());
+    assert_eq!("<script>a();</script>", minify("<script> a(); </script>").unwrap());
 }
 
 #[test]
 fn embedded_options_are_independent() {
     let input = "<script> a(); </script><style> p { color: red; } </style>";
     let mut minifier = HTMLMinifier::new();
-    assert!(!minifier.get_minify_js());
-    assert!(!minifier.get_minify_css());
-    minifier.set_minify_js(true);
+    assert!(minifier.get_minify_js());
+    assert!(minifier.get_minify_css());
+    minifier.set_minify_css(false);
     minifier.digest(input).unwrap();
     assert_eq!(
         b"<script>a();</script><style> p { color: red; } </style>",
@@ -141,7 +146,7 @@ fn embedded_options_are_independent() {
     );
 
     let mut minifier = HTMLMinifier::new();
-    minifier.set_minify_css(true);
+    minifier.set_minify_js(false);
     minifier.digest(input).unwrap();
     assert_eq!(
         b"<script> a(); </script><style>p{color:red;}</style>",
@@ -272,7 +277,7 @@ fn closing_tag_overlap_restarts_at_less_than() {
             ("<pre><</pre><p>a b</p>", "<pre><</pre><p>a   b</p>"),
             ("<textarea></text<</textarea><p>a b</p>", "<textarea></text<</textarea><p>a   b</p>"),
         ],
-        default_options,
+        preserve_embedded,
     );
     test_cases(
         &[("<script></script><p>a b</p>", "<script>//<</script><p>a   b</p>")],
@@ -515,8 +520,5 @@ fn helper_accepts_reader_chunks_and_buffered_output() {
     }
     helper.finish(&mut output).unwrap();
     output.flush().unwrap();
-    assert_eq!(
-        "<p> 中文 😀 </p><script> a(); </script> <".as_bytes(),
-        output.into_inner().unwrap()
-    );
+    assert_eq!("<p> 中文 😀 </p><script>a();</script> <".as_bytes(), output.into_inner().unwrap());
 }

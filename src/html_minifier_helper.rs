@@ -117,9 +117,11 @@ pub struct HTMLMinifierHelper {
     #[educe(Default = true)]
     /// Minify the content in the `code` element.
     pub minify_code:     bool,
-    /// Minify JavaScript in supported script elements, which is disabled by default.
+    #[educe(Default = true)]
+    /// Minify JavaScript in supported script elements.
     pub minify_js:       bool,
-    /// Minify CSS in supported style elements, which is disabled by default.
+    #[educe(Default = true)]
+    /// Minify CSS in supported style elements.
     pub minify_css:      bool,
 
     // Buffers
