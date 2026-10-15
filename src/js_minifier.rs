@@ -70,6 +70,8 @@ enum Token {
     /// A string or a template literal.
     Literal,
     Regex,
+    /// A string or a regular expression that a line break ends, which is an error.
+    Unterminated,
 }
 
 /// Check whether a byte can be a part of an identifier, a keyword or a number.
@@ -184,8 +186,8 @@ impl JSMinifier {
 
     /// Check whether a line break between the latest token and a token starting with `next` can be removed without changing automatic semicolon insertion.
     fn removes_newline(&self, next: u8) -> bool {
-        // A line starting with `-->` is a comment in a classic script.
-        if !self.module && next == b'-' {
+        // The line break ends an unterminated string or regular expression, and a line starting with `-->` is a comment in a classic script.
+        if self.token == Token::Unterminated || (!self.module && next == b'-') {
             return false;
         }
 
@@ -227,8 +229,8 @@ impl JSMinifier {
         Ok(())
     }
 
-    /// Write the held comment, which has to be kept.
-    fn keep_comment(&mut self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
+    /// Write the pending gap before a comment that is kept.
+    fn write_comment_gap(&mut self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
         // The next token is not known yet, so a pending line break always stays.
         if self.gap && self.last[1] != 0 {
             if self.gap_newline {
@@ -242,6 +244,13 @@ impl JSMinifier {
 
         self.gap = false;
         self.gap_newline = false;
+
+        Ok(())
+    }
+
+    /// Write the held comment, which has to be kept.
+    fn keep_comment(&mut self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
+        self.write_comment_gap(out)?;
 
         let held = self.comment.as_bytes();
         out.push_bytes(held)?;
@@ -629,7 +638,7 @@ impl JSMinifier {
                 JSStep::String => {
                     if !self.escape && matches!(e, b'\n' | b'\r') {
                         // An unterminated string stays as it is.
-                        self.token = Token::Literal;
+                        self.token = Token::Unterminated;
                         self.step = JSStep::Normal;
 
                         continue;
@@ -673,7 +682,7 @@ impl JSMinifier {
                 JSStep::Regex => {
                     if matches!(e, b'\n' | b'\r') {
                         // An unterminated regular expression stays as it is.
-                        self.token = Token::Regex;
+                        self.token = Token::Unterminated;
                         self.step = JSStep::Normal;
 
                         continue;
@@ -786,6 +795,7 @@ impl JSMinifier {
     fn write_deferred(&mut self, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
         if self.deferred_in_line_comment {
             // The start of the line comment has been removed, so the comment starts again.
+            self.write_comment_gap(out)?;
             out.push_bytes(b"//<!--")?;
         }
 
