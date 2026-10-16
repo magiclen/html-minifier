@@ -3,8 +3,8 @@ use std::str::from_utf8;
 use educe::Educe;
 
 use crate::{
-    HTMLMinifierError, HTMLWriter, css_minifier::CSSMinifier, functions::*,
-    js_minifier::JSMinifier, script_data::ScriptData,
+    HTMLMinifierError, HTMLWriter, css_minifier::CSSMinifier, foreign_content::ForeignContent,
+    functions::*, js_minifier::JSMinifier, script_data::ScriptData,
 };
 
 /// The longest `type` attribute value that is collected.
@@ -54,7 +54,7 @@ const COMMENT_START: u8 = 4;
 /// The state is 0 in the text, 1 after `-`, 2 after `--`, 3 after `--!`, 4 after `<!--`, and 5 after `<!---`.
 /// Return `None` when the comment ends.
 #[inline]
-const fn next_comment_state(state: u8, e: u8) -> Option<u8> {
+pub(crate) const fn next_comment_state(state: u8, e: u8) -> Option<u8> {
     match (state, e) {
         (2..=5, b'>') => None,
         (4, b'-') => Some(5),
@@ -66,7 +66,7 @@ const fn next_comment_state(state: u8, e: u8) -> Option<u8> {
 }
 
 /// Get the end tag that ends the raw text of an element, such as `</script` for `script`.
-fn raw_text_end_tag(tag: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn raw_text_end_tag(tag: &[u8]) -> Option<&'static [u8]> {
     let end_tag: &'static [u8] = match tag {
         b"script" => b"</script",
         b"style" => b"</style",
@@ -110,6 +110,8 @@ enum Step {
     Code,
     Textarea,
     RawText,
+    Foreign,
+    Plaintext,
 }
 
 impl Step {
@@ -142,6 +144,8 @@ impl Step {
                 | Step::Code
                 | Step::Textarea
                 | Step::RawText
+                | Step::Foreign
+                | Step::Plaintext
         )
     }
 }
@@ -213,17 +217,19 @@ pub struct HTMLMinifierHelper {
     css:         CSSMinifier,
     js:          JSMinifier,
     script_data: ScriptData,
+    foreign:     ForeignContent,
 
     // Steps
-    step:              Step,
-    step_counter:      u8,
-    preserved_step:    PreservedStep,
-    preserved_depth:   usize,
-    preserved_counter: u8,
-    preserved_end_tag: bool,
+    step:                Step,
+    step_counter:        u8,
+    preserved_step:      PreservedStep,
+    preserved_depth:     usize,
+    preserved_counter:   u8,
+    preserved_end_tag:   bool,
+    preserved_plaintext: bool,
     #[educe(Debug(method = "str_bytes_fmt"))]
-    raw_end:           &'static [u8],
-    preserved_quote:   u8,
+    raw_end:             &'static [u8],
+    preserved_quote:     u8,
 
     // Temp
     quote:      u8,
@@ -375,6 +381,7 @@ impl HTMLMinifierHelper {
                 self.step_counter = 0;
                 Step::Textarea
             },
+            b"plaintext" => Step::Plaintext,
             _ => {
                 self.last_space = 0;
 
@@ -427,9 +434,18 @@ impl HTMLMinifierHelper {
     /// Skip the bytes of raw text or preserved content that can neither start an end tag nor need a change.
     #[inline]
     fn skip_content(&self, text_bytes: &[u8], mut p: usize) -> usize {
+        if self.step == Step::Foreign
+            || (matches!(self.step, Step::Pre | Step::Code) && self.foreign.is_active())
+        {
+            return p;
+        }
+
         let script = matches!(self.step, Step::ScriptDefault | Step::ScriptJavaScript);
+        let plaintext = self.step == Step::Plaintext;
         let title = self.in_title();
-        let plain = if matches!(self.step, Step::Pre | Step::Code) {
+        let plain = if plaintext {
+            true
+        } else if matches!(self.step, Step::Pre | Step::Code) {
             self.preserved_step == PreservedStep::Data
         } else {
             self.step_counter == 0 && (!script || self.script_data.can_skip())
@@ -438,7 +454,7 @@ impl HTMLMinifierHelper {
         // A LF after a CR is removed, so it is not skipped.
         if plain && !self.follows_cr(text_bytes, p) {
             while let Some(&e) = text_bytes.get(p) {
-                if e == b'<'
+                if (!plaintext && e == b'<')
                     || e == b'\r'
                     || is_ascii_control(e)
                     || (script && e == b'-' && self.script_data.tracks_dash())
@@ -622,6 +638,7 @@ impl HTMLMinifierHelper {
         self.preserved_depth = 1;
         self.preserved_counter = 0;
         self.preserved_end_tag = false;
+        self.preserved_plaintext = false;
         self.preserved_quote = 0;
         self.raw_end = b"";
         self.preserved_tag.clear();
@@ -630,6 +647,7 @@ impl HTMLMinifierHelper {
     #[inline]
     fn start_preserved_tag_name(&mut self, e: u8, end_tag: bool) {
         self.preserved_end_tag = end_tag;
+        self.preserved_plaintext = false;
         self.preserved_tag.clear();
         self.preserved_tag.push(e.to_ascii_lowercase());
         self.preserved_step = PreservedStep::TagName;
@@ -637,6 +655,11 @@ impl HTMLMinifierHelper {
 
     #[inline]
     fn end_preserved_tag(&mut self) {
+        if self.preserved_plaintext {
+            self.preserved_plaintext = false;
+            self.step = Step::Plaintext;
+        }
+
         self.preserved_step = if self.raw_end.is_empty() {
             PreservedStep::Data
         } else {
@@ -694,6 +717,16 @@ impl HTMLMinifierHelper {
     /// Follow the HTML tokenizer inside a preserved element.
     /// Return `true` when the name of the closing tag of the preserved element ends.
     fn digest_preserved(&mut self, e: u8) -> bool {
+        if self.foreign.is_active() {
+            self.foreign.feed(e);
+
+            if self.foreign.is_plaintext() {
+                self.step = Step::Plaintext;
+            }
+
+            return false;
+        }
+
         match self.preserved_step {
             PreservedStep::Data => {
                 if e == b'<' {
@@ -718,6 +751,18 @@ impl HTMLMinifierHelper {
             },
             PreservedStep::TagName => {
                 if e == b'>' || e == b'/' || is_whitespace(e) {
+                    if !self.preserved_end_tag {
+                        if matches!(self.preserved_tag.as_slice(), b"svg" | b"math") {
+                            self.foreign.start(&self.preserved_tag);
+                            self.foreign.feed(e);
+                            self.preserved_step = PreservedStep::Data;
+
+                            return false;
+                        }
+
+                        self.preserved_plaintext = self.preserved_tag == b"plaintext";
+                    }
+
                     let root: &[u8] = if self.step == Step::Pre { b"pre" } else { b"code" };
                     if self.preserved_tag == root {
                         if self.preserved_end_tag {
@@ -803,9 +848,11 @@ impl HTMLMinifierHelper {
         self.css.reset();
         self.js.reset(false);
         self.script_data.reset();
+        self.foreign.reset();
         self.preserved_depth = 0;
         self.preserved_counter = 0;
         self.preserved_end_tag = false;
+        self.preserved_plaintext = false;
         self.raw_end = b"";
         self.preserved_quote = 0;
         self.quote = 0;
@@ -828,7 +875,11 @@ impl HTMLMinifierHelper {
     /// An error can leave partial output in the writer.
     pub fn finish<W: HTMLWriter>(&mut self, out: &mut W) -> Result<(), HTMLMinifierError> {
         match self.step {
-            Step::Initial | Step::InitialRemainOneWhitespace | Step::InitialIgnoreWhitespace => (),
+            Step::Initial
+            | Step::InitialRemainOneWhitespace
+            | Step::InitialIgnoreWhitespace
+            | Step::Plaintext => (),
+            Step::Foreign if self.foreign.can_finish() => (),
             Step::StartTagInitial => out.push(b'<')?,
             Step::EndTagInitial => out.push_bytes(b"</")?,
             _ => return Err(HTMLMinifierError::IncompleteInput),
@@ -867,7 +918,25 @@ impl HTMLMinifierHelper {
 
                 let e = text_bytes[p];
 
-                if matches!(self.step, Step::Pre | Step::Code) {
+                if matches!(self.step, Step::Foreign | Step::Plaintext) {
+                    if is_ascii_control(e) {
+                        out.push_bytes(&text_bytes[start..p])?;
+                        start = p + 1;
+                    } else {
+                        if self.step == Step::Foreign {
+                            self.foreign.feed(e);
+
+                            if self.foreign.is_plaintext() {
+                                self.step = Step::Plaintext;
+                            } else if !self.foreign.is_active() {
+                                self.last_space = 0;
+                                self.step = Step::InitialRemainOneWhitespace;
+                            }
+                        }
+
+                        self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
+                    }
+                } else if matches!(self.step, Step::Pre | Step::Code) {
                     if is_ascii_control(e) {
                         out.push_bytes(&text_bytes[start..p])?;
                         start = p + 1;
@@ -1112,6 +1181,15 @@ impl HTMLMinifierHelper {
                         },
                         Step::StartTag => {
                             // <a?
+                            if (is_whitespace(e) || matches!(e, b'/' | b'>'))
+                                && matches!(self.tag.as_slice(), b"svg" | b"math")
+                            {
+                                self.foreign.start(&self.tag);
+                                self.step = Step::Foreign;
+
+                                continue;
+                            }
+
                             if is_whitespace(e) {
                                 out.push_bytes(&text_bytes[start..p])?;
                                 start = p + 1;
@@ -1475,7 +1553,9 @@ impl HTMLMinifierHelper {
                         | Step::Pre
                         | Step::Code
                         | Step::Textarea
-                        | Step::RawText => unreachable!(),
+                        | Step::RawText
+                        | Step::Foreign
+                        | Step::Plaintext => unreachable!(),
                     }
                 }
             } else {
@@ -1613,7 +1693,9 @@ impl HTMLMinifierHelper {
                     | Step::Textarea
                     | Step::ScriptJavaScript
                     | Step::StyleCSS
-                    | Step::RawText => unreachable!(),
+                    | Step::RawText
+                    | Step::Foreign
+                    | Step::Plaintext => unreachable!(),
                 }
             }
 

@@ -18,6 +18,8 @@ HTML is minified by the following rules:
   * `<textarea>`
   * `<title>` (only whitespace is collapsed)
   * `<xmp>`, `<iframe>`, `<noembed>` and `<noframes>`
+  * `<svg>` and `<math>` (including their start tags and HTML children)
+  * `<plaintext>` (all content after its start tag is preserved until the end of input)
   * `<code>` (optionally, minified by default)
   * `<style>` (preserved if CSS minification is disabled or its `type` is unsupported)
   * `<script>` (preserved if JavaScript minification is disabled or its `type` is unsupported)
@@ -28,6 +30,8 @@ The original (non-minified) HTML doesn't need to be completely generated before 
 `digest` accepts byte slices, including chunks that split a UTF-8 character. Call `finish` after the last chunk. `get_html` returns the current output snapshot and may omit pending content until `finish` succeeds. `into_html` calls `finish` and returns the owned output buffer without copying it. The `minify` convenience function finishes the input automatically.
 
 `finish` reports incomplete tags, comments and special elements. It preserves a trailing literal `<` or `</`. It does not validate the whole document or require every ordinary element to have a closing tag.
+
+Foreign SVG and MathML content is preserved as one region, including comments and embedded code. HTML minification resumes after the region ends. A `plaintext` element consumes all remaining input, including text that looks like an end tag. Preserved content still follows the control-character and line-break rules.
 
 ## Examples
 

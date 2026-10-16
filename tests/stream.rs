@@ -565,16 +565,24 @@ fn finish_flushes_literal_prefixes_and_reports_incomplete_input() {
         assert!(matches!(minify(input), Err(HTMLMinifierError::IncompleteInput)), "{input:?}");
     }
 
-    let mut minifier = HTMLMinifier::new();
-    minifier.digest("<div>").unwrap();
-    minifier.finish().unwrap();
-    minifier.finish().unwrap();
-    assert_eq!(b"<div>", minifier.get_html());
+    for input in ["<div>", "<svg>", "<math>text <", "<svg>text </"] {
+        let mut minifier = HTMLMinifier::new();
+        minifier.digest(input).unwrap();
+        minifier.finish().unwrap();
+        minifier.finish().unwrap();
+        assert_eq!(input.as_bytes(), minifier.get_html());
+    }
 }
 
 #[test]
 fn reset_discards_pending_parser_state_and_preserves_options() {
-    for input in ["<div class='x ", "<script type='module'>x", "<pre><span title='", "<!-- x"] {
+    for input in [
+        "<div class='x ",
+        "<script type='module'>x",
+        "<pre><span title='",
+        "<svg><foreignObject><script>",
+        "<!-- x",
+    ] {
         let mut minifier = HTMLMinifier::new();
         minify_embedded(&mut minifier);
         minifier.set_minify_code(false);
@@ -765,4 +773,146 @@ fn bare_type_attributes_take_precedence() {
         ],
         default_options,
     );
+}
+
+#[test]
+fn foreign_content_keeps_start_tags_and_literal_markup() {
+    test_cases(
+        &[
+            ("<SVG  class=' a  b ' /><p>x y</p>", "<SVG  class=' a  b ' /><p>x   y</p>"),
+            (
+                "<svg><style/><script/><title/></svg><p>x y</p>",
+                "<svg><style/><script/><title/></svg><p>x   y</p>",
+            ),
+            (
+                "<math><style/><script/></math><p>x y</p>",
+                "<math><style/><script/></math><p>x   y</p>",
+            ),
+            (
+                "<svg><svg><path /></svg>  x</svg><p>y z</p>",
+                "<svg><svg><path /></svg>  x</svg><p>y   z</p>",
+            ),
+            (
+                "<svg a='</svg>'><!-- </svg> --><![CDATA[a > b<!--c--></svg>]]><text>中文  \
+                 😀</text></svg><p>x y</p>",
+                "<svg a='</svg>'><!-- </svg> --><![CDATA[a > b<!--c--></svg>]]><text>中文  \
+                 😀</text></svg><p>x   y</p>",
+            ),
+            (
+                "<math><![CDATA[a > b<!--c--></math>]]></math><p>x y</p>",
+                "<math><![CDATA[a > b<!--c--></math>]]></math><p>x   y</p>",
+            ),
+            ("<svg>\na\nb</svg><p>x y</p>", "<svg>\r\na\x00\rb</svg><p>x   y</p>"),
+        ],
+        default_options,
+    );
+}
+
+#[test]
+fn foreign_integration_points_follow_html_text_modes() {
+    for tag in ["foreignObject", "desc", "title"] {
+        let region = format!(
+            "<svg><{tag}><div><br><script>let s = '</svg>';  run();</script><style>a::after {{ \
+             content: '</svg>'; }}</style><textarea></svg>  \
+             x</textarea><svg><style/></svg></div></{tag}></svg>"
+        );
+        test_cases(
+            &[(&format!("{region}<p>x y</p>"), &format!("{region}<p>x   y</p>"))],
+            default_options,
+        );
+    }
+
+    for tag in ["mi", "mo", "mn", "ms", "mtext"] {
+        let region = format!(
+            "<math><{tag}><mglyph><style/></mglyph><malignmark/><script>let s = '</math>';  \
+             run();</script><textarea></math>  x</textarea></{tag}></math>"
+        );
+        test_cases(
+            &[(&format!("{region}<p>x y</p>"), &format!("{region}<p>x   y</p>"))],
+            default_options,
+        );
+    }
+
+    for encoding in [
+        "text/html",
+        "APPLICATION/XHTML+XML",
+        "text&#47;html",
+        "text&#47html",
+        "text&#x00002Fhtml",
+        "text&sol;html",
+        "application/xhtml&plus;xml",
+    ] {
+        let region = format!(
+            "<math><annotation-xml encoding='{encoding}' encoding='application/xml'><script>let s \
+             = '</math>';  run();</script></annotation-xml></math>"
+        );
+        test_cases(
+            &[(&format!("{region}<p>x y</p>"), &format!("{region}<p>x   y</p>"))],
+            default_options,
+        );
+    }
+
+    test_cases(
+        &[
+            (
+                "<svg><foreignObject><![CDATA[</svg>]]><script>let s = \
+                 '</svg>';</script></foreignObject></svg><p>x y</p>",
+                "<svg><foreignObject><![CDATA[</svg>]]><script>let s = \
+                 '</svg>';</script></foreignObject></svg><p>x   y</p>",
+            ),
+            (
+                "<math><annotation-xml encoding='application/xml' \
+                 encoding='text/html'><script/><style/></annotation-xml></math><p>x y</p>",
+                "<math><annotation-xml encoding='application/xml' \
+                 encoding='text/html'><script/><style/></annotation-xml></math><p>x   y</p>",
+            ),
+            (
+                "<math><annotation-xml><svg><foreignObject><script>let s = \
+                 '</math>';</script></foreignObject></svg></annotation-xml></math><p>x y</p>",
+                "<math><annotation-xml><svg><foreignObject><script>let s = \
+                 '</math>';</script></foreignObject></svg></annotation-xml></math><p>x   y</p>",
+            ),
+        ],
+        default_options,
+    );
+}
+
+#[test]
+fn foreign_content_returns_to_preserved_html() {
+    test_cases(
+        &[(
+            "<pre><svg><style/><foreignObject><script>let \
+             s='</pre></svg>';</script></foreignObject></svg>  x</pre><p>y z</p>",
+            "<pre><svg><style/><foreignObject><script>let \
+             s='</pre></svg>';</script></foreignObject></svg>  x</pre><p>y   z</p>",
+        )],
+        default_options,
+    );
+    test_cases(
+        &[(
+            "<code><math><mtext><script>let s='</code></math>';</script></mtext></math>  \
+             x</code><p>y z</p>",
+            "<code><math><mtext><script>let s='</code></math>';</script></mtext></math>  \
+             x</code><p>y   z</p>",
+        )],
+        preserve_code,
+    );
+}
+
+#[test]
+fn plaintext_keeps_everything_until_end_of_input() {
+    for input in [
+        "<plaintext>",
+        "<plaintext>a  b<!--c-->",
+        "<plaintext>中文  😀</plaintext><p>x   y</p>",
+        "<pre><plaintext>a  b</pre><p>x   y</p>",
+        "<svg><foreignObject><plaintext>a  b</svg><p>x   y</p>",
+        "<pre><math><mtext><plaintext>a  b</pre></math>",
+    ] {
+        test_cases(&[(input, input)], default_options);
+    }
+    test_cases(&[("<plaintext>a\nb\nc", "<plaintext>a\rb\r\nc\x00")], default_options);
+    let input = "<code><plaintext>a  b</code>";
+    test_cases(&[(input, input)], preserve_code);
+    assert_eq!("<plaintext>a  b<!--c-->", minify("<plaintext>a  b<!--c-->").unwrap());
 }
