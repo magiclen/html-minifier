@@ -129,7 +129,7 @@ fn start_tag_initial() {
 #[test]
 fn end_tag_initial() {
     const CASES: [(&str, &str); 5] =
-        [("", "</>"), ("123", "123</>"), ("</a", "</a"), ("</", "</ "), ("</", "</\t")];
+        [("", "</>"), ("123", "123</>"), ("</a", "</a"), ("</ ", "</ "), ("</\t", "</\t")];
 
     test_enabled_all_options(&CASES);
 }
@@ -236,11 +236,12 @@ fn end_tag() {
 
 #[test]
 fn tag_end() {
-    const CASES: [(&str, &str); 4] = [
+    const CASES: [(&str, &str); 5] = [
         ("<aaa/ 123", "<aaa/123"),
         ("<aaa/>", "<aaa/>"),
         ("</aaa", "</aaa 123"),
         ("</aaa>", "</aaa 123>"),
+        ("</aaa>", "</aaa a='>'>"),
     ];
 
     test_enabled_all_options(&CASES);

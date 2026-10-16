@@ -7,7 +7,7 @@ HTML is minified by the following rules:
 
 * ASCII control characters (0x00-0x08, 0x0B, 0x0E-0x1F, 0x7F) are always removed.
 * Comments can be optionally removed. (removed by default)
-  Empty comments are kept when needed to preserve character reference boundaries.
+  Empty comments are kept when needed to keep text from forming a different character reference or tag.
 * Unnecessary whitespace is removed.
 * HTML whitespace (spaces, tabs, line feeds, carriage returns and form feeds) is collapsed to a single space or line feed where applicable.
 * Empty attribute values are collapsed. (e.g `<input readonly="">` => `<input readonly>` )
@@ -98,7 +98,7 @@ assert_eq!("<script type='  application/javascript '>alert('Hello!');</script>".
 
 | Setter | Default | Effect |
 | --- | --- | --- |
-| `set_remove_comments` | `true` | Remove HTML comments outside preserved content, except empty comments needed to preserve character reference boundaries. |
+| `set_remove_comments` | `true` | Remove HTML comments outside preserved content, except empty comments needed to keep text from forming a different character reference or tag. |
 | `set_minify_code` | `true` | Minify HTML inside `<code>` elements. |
 | `set_minify_js` | `true` | Minify supported JavaScript content. |
 | `set_minify_css` | `true` | Minify supported CSS content. |
@@ -125,8 +125,9 @@ Type matching ignores ASCII case and decodes character references.
 The original attribute value is preserved.
 Other types keep their content unchanged.
 
-Removing a comment must not join text into a different character reference.
+Removing a comment or `</>` must not join text into a different character reference or tag.
 For example, `&co<!-- note -->py;` becomes `&co<!---->py;` so its text stays `&copy;` instead of becoming `©`.
+Likewise, `a<<!-- note -->b` becomes `a<<!---->b` so `<b` does not start a tag.
 
 JavaScript and CSS minification only removes comments and whitespace, so the code keeps its meaning. JavaScript line breaks that automatic semicolon insertion (ASI) needs are kept. When the meaning of a slash is unclear, the rest of that script is preserved. Block comments whose text starts with `!` or contains `@lic` (such as `@license`) or `@preserve` are kept. Preserved content still follows the control-character removal rule above.
 
@@ -195,7 +196,7 @@ pub struct HTMLMinifier {
 
 impl HTMLMinifier {
     /// Set whether to remove HTML comments.
-    /// Empty comments are kept when needed to preserve character reference boundaries.
+    /// Empty comments are kept when needed to keep text from forming a different character reference or tag.
     #[inline]
     pub fn set_remove_comments(&mut self, remove_comments: bool) {
         self.helper.remove_comments = remove_comments;

@@ -189,6 +189,8 @@ fn comments_end_like_browsers() {
             ("abc", "a<!-- x --->b<!-- y -->c"),
             ("abc", "a<!-- x ---->b<!-- y -->c"),
             ("abc", "a<!-->b<!--->c"),
+            ("ab", "a<!-- x --!>b"),
+            ("<!DOCTYPE html>", "<!-- license -->\n<!DOCTYPE html>"),
         ],
         default_options,
     );
@@ -213,6 +215,8 @@ fn removed_comments_keep_character_reference_boundaries() {
             ("<p>&#x26<!---->0;</p>", "<p>&#x26<!-- note -->0;</p>"),
             ("<p>&co<!---->py;</p>", "<p>&co<!-- first --><!-- second -->py;</p>"),
             ("<p>&co甲py;</p>", "<p>&co甲<!-- note -->py;</p>"),
+            ("<p>a<<!---->b</p>", "<p>a<<!-- note -->b</p>"),
+            ("<p>&co</>py;</p>", "<p>&co</>py;</p>"),
             (
                 "<p>&copy; &amp; &#65; &#x26;</p>",
                 "<p>&copy;<!-- a --> &amp;<!-- b --> &#65;<!-- c --> &#x26;<!-- d --></p>",
@@ -273,6 +277,7 @@ fn preserved_html_tracks_quotes_comments_and_raw_children() {
             ("<pre><img alt=Don't></pre><p>a b</p>", "<pre><img alt=Don't></pre><p>a   b</p>"),
             ("<pre><![CDATA[it's]]></pre><p>a b</p>", "<pre><![CDATA[it's]]></pre><p>a   b</p>"),
             ("<pre><!-->x</pre><p>a b</p>", "<pre><!-->x</pre><p>a   b</p>"),
+            ("<pre><!-- --!></pre><p>a b</p>", "<pre><!-- --!></pre><p>a   b</p>"),
         ],
         default_options,
     );
@@ -732,7 +737,16 @@ fn unicode_tag_names_keep_attribute_values() {
 
 #[test]
 fn literal_less_than_does_not_start_a_tag() {
-    test_cases(&[("a<3", "a<3"), ("a<>b", "a<>b"), ("a<=b", "a<=b")], default_options);
+    test_cases(
+        &[
+            ("a<3", "a<3"),
+            ("a<>b", "a<>b"),
+            ("a<=b", "a<=b"),
+            ("<p></ <!-- x -->a</p>", "<p></ <!-- x -->a</p>"),
+            ("<p><?x <!-- y -->a></p>", "<p><?x <!-- y -->a></p>"),
+        ],
+        default_options,
+    );
     assert_eq!("a<3", minify("a<3").unwrap());
 }
 

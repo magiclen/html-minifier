@@ -47,6 +47,24 @@ fn embedded_type(tag: &[u8], value: &[u8]) -> Option<bool> {
     }
 }
 
+/// The state of a comment right after `<!--`.
+const COMMENT_START: u8 = 4;
+
+/// Follow the comment states of the HTML tokenizer that can end a comment.
+/// The state is 0 in the text, 1 after `-`, 2 after `--`, 3 after `--!`, 4 after `<!--`, and 5 after `<!---`.
+/// Return `None` when the comment ends.
+#[inline]
+const fn next_comment_state(state: u8, e: u8) -> Option<u8> {
+    match (state, e) {
+        (2..=5, b'>') => None,
+        (4, b'-') => Some(5),
+        (1 | 2 | 5, b'-') => Some(2),
+        (0 | 3, b'-') => Some(1),
+        (2, b'!') => Some(3),
+        _ => Some(0),
+    }
+}
+
 /// Get the end tag that ends the raw text of an element, such as `</script` for `script`.
 fn raw_text_end_tag(tag: &[u8]) -> Option<&'static [u8]> {
     let end_tag: &'static [u8] = match tag {
@@ -167,7 +185,7 @@ enum PreservedStep {
 #[educe(Debug, Default(new))]
 pub struct HTMLMinifierHelper {
     #[educe(Default = true)]
-    /// Remove HTML comments, keeping empty comments where text could form a character reference.
+    /// Remove HTML comments, keeping empty comments where text could form a character reference or a tag.
     pub remove_comments: bool,
     #[educe(Default = true)]
     /// Minify the content in the `code` element.
@@ -213,10 +231,12 @@ pub struct HTMLMinifierHelper {
     last_cr:    bool,
 
     // Flags
-    /// Whether the text ends with an unfinished character reference.
+    /// Whether the text ends with an unfinished character reference or a literal `<`, which the text after a removed comment or `</>` could join.
     reference_pending:    bool,
     /// Whether the whitespace before removed comments has already been written.
     text_space_written:   bool,
+    /// Whether the current tag or comment is at the start of the document.
+    at_start:             bool,
     quoted_value_spacing: bool,
     quoted_value_empty:   bool,
     in_handled_attribute: bool,
@@ -257,6 +277,7 @@ impl HTMLMinifierHelper {
     #[inline]
     fn begin_tag(&mut self) {
         self.in_end_tag = false;
+        self.at_start = false;
         self.attribute_type.clear();
         self.type_seen = false;
         self.type_supported = true;
@@ -465,8 +486,16 @@ impl HTMLMinifierHelper {
             self.step = Step::InitialRemainOneWhitespace;
         } else {
             self.in_end_tag = true;
-            self.step = Step::TagEnd;
+            self.begin_end_tag_attributes();
         }
+    }
+
+    /// Start removing the attributes of an end tag.
+    /// The attribute steps of `PreservedStep` follow them, so that a `>` in a quoted value does not end the tag.
+    #[inline]
+    fn begin_end_tag_attributes(&mut self) {
+        self.preserved_step = PreservedStep::BeforeAttributeName;
+        self.step = Step::TagEnd;
     }
 
     /// Process a byte of embedded JavaScript or CSS.
@@ -616,6 +645,52 @@ impl HTMLMinifierHelper {
         };
     }
 
+    /// Follow the attributes of a tag, so that a `>` in a quoted value does not end the tag.
+    #[inline]
+    fn digest_tag_attribute(&mut self, e: u8) {
+        match self.preserved_step {
+            PreservedStep::BeforeAttributeName => match e {
+                b'>' => self.end_preserved_tag(),
+                _ if e == b'/' || is_whitespace(e) => (),
+                _ => self.preserved_step = PreservedStep::AttributeName,
+            },
+            PreservedStep::AttributeName => match e {
+                b'>' => self.end_preserved_tag(),
+                b'/' => self.preserved_step = PreservedStep::BeforeAttributeName,
+                b'=' => self.preserved_step = PreservedStep::BeforeAttributeValue,
+                _ if is_whitespace(e) => self.preserved_step = PreservedStep::AfterAttributeName,
+                _ => (),
+            },
+            PreservedStep::AfterAttributeName => match e {
+                b'>' => self.end_preserved_tag(),
+                b'/' => self.preserved_step = PreservedStep::BeforeAttributeName,
+                b'=' => self.preserved_step = PreservedStep::BeforeAttributeValue,
+                _ if is_whitespace(e) => (),
+                _ => self.preserved_step = PreservedStep::AttributeName,
+            },
+            PreservedStep::BeforeAttributeValue => match e {
+                b'>' => self.end_preserved_tag(),
+                b'"' | b'\'' => {
+                    self.preserved_quote = e;
+                    self.preserved_step = PreservedStep::QuotedAttributeValue;
+                },
+                _ if is_whitespace(e) => (),
+                _ => self.preserved_step = PreservedStep::UnquotedAttributeValue,
+            },
+            PreservedStep::QuotedAttributeValue => {
+                if e == self.preserved_quote {
+                    self.preserved_step = PreservedStep::BeforeAttributeName;
+                }
+            },
+            PreservedStep::UnquotedAttributeValue => match e {
+                b'>' => self.end_preserved_tag(),
+                _ if is_whitespace(e) => self.preserved_step = PreservedStep::BeforeAttributeName,
+                _ => (),
+            },
+            _ => (),
+        }
+    }
+
     /// Follow the HTML tokenizer inside a preserved element.
     /// Return `true` when the name of the closing tag of the preserved element ends.
     fn digest_preserved(&mut self, e: u8) -> bool {
@@ -674,49 +749,16 @@ impl HTMLMinifierHelper {
                     push_name_byte(&mut self.preserved_tag, e.to_ascii_lowercase());
                 }
             },
-            PreservedStep::BeforeAttributeName => match e {
-                b'>' => self.end_preserved_tag(),
-                _ if e == b'/' || is_whitespace(e) => (),
-                _ => self.preserved_step = PreservedStep::AttributeName,
-            },
-            PreservedStep::AttributeName => match e {
-                b'>' => self.end_preserved_tag(),
-                b'/' => self.preserved_step = PreservedStep::BeforeAttributeName,
-                b'=' => self.preserved_step = PreservedStep::BeforeAttributeValue,
-                _ if is_whitespace(e) => self.preserved_step = PreservedStep::AfterAttributeName,
-                _ => (),
-            },
-            PreservedStep::AfterAttributeName => match e {
-                b'>' => self.end_preserved_tag(),
-                b'/' => self.preserved_step = PreservedStep::BeforeAttributeName,
-                b'=' => self.preserved_step = PreservedStep::BeforeAttributeValue,
-                _ if is_whitespace(e) => (),
-                _ => self.preserved_step = PreservedStep::AttributeName,
-            },
-            PreservedStep::BeforeAttributeValue => match e {
-                b'>' => self.end_preserved_tag(),
-                b'"' | b'\'' => {
-                    self.preserved_quote = e;
-                    self.preserved_step = PreservedStep::QuotedAttributeValue;
-                },
-                _ if is_whitespace(e) => (),
-                _ => self.preserved_step = PreservedStep::UnquotedAttributeValue,
-            },
-            PreservedStep::QuotedAttributeValue => {
-                if e == self.preserved_quote {
-                    self.preserved_step = PreservedStep::BeforeAttributeName;
-                }
-            },
-            PreservedStep::UnquotedAttributeValue => match e {
-                b'>' => self.end_preserved_tag(),
-                _ if is_whitespace(e) => self.preserved_step = PreservedStep::BeforeAttributeName,
-                _ => (),
-            },
+            PreservedStep::BeforeAttributeName
+            | PreservedStep::AttributeName
+            | PreservedStep::AfterAttributeName
+            | PreservedStep::BeforeAttributeValue
+            | PreservedStep::QuotedAttributeValue
+            | PreservedStep::UnquotedAttributeValue => self.digest_tag_attribute(e),
             PreservedStep::Declaration => match e {
                 b'-' if self.preserved_counter == 0 => self.preserved_counter = 1,
                 b'-' => {
-                    // Start at 2 so that `<!-->` and `<!--->` end the comment, as in browsers.
-                    self.preserved_counter = 2;
+                    self.preserved_counter = COMMENT_START;
                     self.preserved_step = PreservedStep::Comment;
                 },
                 b'>' => self.preserved_step = PreservedStep::Data,
@@ -727,10 +769,9 @@ impl HTMLMinifierHelper {
                     self.preserved_step = PreservedStep::Data;
                 }
             },
-            PreservedStep::Comment => match e {
-                b'-' => self.preserved_counter = (self.preserved_counter + 1).min(2),
-                b'>' if self.preserved_counter == 2 => self.preserved_step = PreservedStep::Data,
-                _ => self.preserved_counter = 0,
+            PreservedStep::Comment => match next_comment_state(self.preserved_counter, e) {
+                Some(state) => self.preserved_counter = state,
+                None => self.preserved_step = PreservedStep::Data,
             },
             PreservedStep::Raw => {
                 if self.script_data.ends(e, self.raw_end, &mut self.preserved_counter) {
@@ -772,6 +813,7 @@ impl HTMLMinifierHelper {
         self.last_cr = false;
         self.reference_pending = false;
         self.text_space_written = false;
+        self.at_start = false;
         self.quoted_value_spacing = false;
         self.quoted_value_empty = false;
         self.in_handled_attribute = false;
@@ -888,6 +930,7 @@ impl HTMLMinifierHelper {
                                     start = p + 1;
 
                                     self.begin_tag();
+                                    self.at_start = true;
                                     self.step = Step::StartTagInitial;
                                 },
                                 _ => {
@@ -984,11 +1027,20 @@ impl HTMLMinifierHelper {
                                 b'/' => {
                                     start = p + 1;
 
-                                    self.reference_pending = false;
                                     self.text_space_written = false;
 
                                     self.in_end_tag = true;
                                     self.step = Step::EndTagInitial;
+                                },
+                                b'?' => {
+                                    // `<?` starts a bogus comment, which ends at the first `>`.
+                                    out.push(b'<')?;
+
+                                    self.reference_pending = false;
+                                    self.text_space_written = false;
+
+                                    self.step_counter = 255;
+                                    self.step = Step::Doctype;
                                 },
                                 b'!' => {
                                     // <!
@@ -1000,7 +1052,8 @@ impl HTMLMinifierHelper {
                                 _ => {
                                     out.push(b'<')?;
 
-                                    self.reference_pending = false;
+                                    // A literal `<` before another `<` must not join the text after a removed comment or `</>`.
+                                    self.reference_pending = e == b'<';
                                     self.text_space_written = false;
 
                                     if is_whitespace(e) {
@@ -1028,6 +1081,12 @@ impl HTMLMinifierHelper {
                             match e {
                                 b'>' => {
                                     // </>
+                                    if self.reference_pending {
+                                        // Keep a boundary so that text on both sides cannot form a character reference or a tag.
+                                        out.push_bytes(b"</>")?;
+                                        self.reference_pending = false;
+                                    }
+
                                     start = p + 1;
 
                                     self.last_space = 0;
@@ -1036,14 +1095,17 @@ impl HTMLMinifierHelper {
                                 _ => {
                                     out.push_bytes(b"</")?;
 
-                                    if is_whitespace(e) {
-                                        start = p + 1;
+                                    self.reference_pending = false;
 
-                                        self.last_space = e;
-
-                                        self.step = Step::InitialIgnoreWhitespace;
-                                    } else {
+                                    if e.is_ascii_alphabetic() {
                                         self.step = Step::EndTag;
+                                    } else {
+                                        // `</` that a letter does not follow starts a bogus comment, which ends at the first `>`.
+                                        self.step_counter = 255;
+                                        self.step = Step::Doctype;
+                                        self.normalize_line_break(
+                                            e, out, text_bytes, &mut start, p,
+                                        )?;
                                     }
                                 },
                             }
@@ -1278,7 +1340,7 @@ impl HTMLMinifierHelper {
                                 out.push_bytes(&text_bytes[start..p])?;
                                 start = p + 1;
 
-                                self.step = Step::TagEnd;
+                                self.begin_end_tag_attributes();
                             } else if e == b'>' {
                                 self.last_space = 0;
                                 self.step = Step::InitialRemainOneWhitespace;
@@ -1287,8 +1349,12 @@ impl HTMLMinifierHelper {
                         Step::TagEnd => {
                             // <a/?
                             // </a ?
+                            // A `>` in a quoted value of an end tag does not end the tag.
+                            let quoted = self.in_end_tag
+                                && self.preserved_step == PreservedStep::QuotedAttributeValue;
+
                             match e {
-                                b'>' => {
+                                b'>' if !quoted => {
                                     if self.in_end_tag {
                                         self.last_space = 0;
                                         self.step = Step::InitialRemainOneWhitespace;
@@ -1303,6 +1369,7 @@ impl HTMLMinifierHelper {
 
                                     if self.in_end_tag {
                                         start = p + 1;
+                                        self.digest_tag_attribute(e);
                                     } else {
                                         // A `/` that `>` does not follow is ignored, so attributes can follow it.
                                         start = p;
@@ -1347,7 +1414,7 @@ impl HTMLMinifierHelper {
                                                 out.push_bytes(b"<!--")?;
                                                 self.text_space_written = false;
                                             } else if self.reference_pending {
-                                                // Keep a boundary so that text on both sides cannot form a character reference.
+                                                // Keep a boundary so that text on both sides cannot form a character reference or a tag.
                                                 out.push_bytes(b"<!---->")?;
                                             }
 
@@ -1355,8 +1422,7 @@ impl HTMLMinifierHelper {
 
                                             start = p + 1;
 
-                                            // Start at 2 so that `<!-->` and `<!--->` end the comment, as in browsers.
-                                            self.step_counter = 2;
+                                            self.step_counter = COMMENT_START;
                                             self.step = Step::Comment;
                                         },
                                         _ => {
@@ -1386,18 +1452,20 @@ impl HTMLMinifierHelper {
                                 self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                             }
 
-                            match e {
-                                b'-' => self.step_counter = (self.step_counter + 1).min(2),
-                                b'>' if self.step_counter == 2 => {
-                                    // The whitespace before a removed comment is already written, so the whitespace after it is skipped.
-                                    self.step = if self.remove_comments && self.text_space_written {
+                            match next_comment_state(self.step_counter, e) {
+                                Some(state) => self.step_counter = state,
+                                None => {
+                                    self.step = if self.remove_comments && self.at_start {
+                                        // The whitespace after a removed comment at the start of the document is removed too.
+                                        Step::Initial
+                                    } else if self.remove_comments && self.text_space_written {
+                                        // The whitespace before a removed comment is already written, so the whitespace after it is skipped.
                                         Step::InitialIgnoreWhitespace
                                     } else {
                                         Step::InitialRemainOneWhitespace
                                     };
                                     self.last_space = 0;
                                 },
-                                _ => self.step_counter = 0,
                             }
                         },
                         Step::ScriptDefault
@@ -1452,11 +1520,13 @@ impl HTMLMinifierHelper {
                     },
                     Step::EndTagInitial => {
                         // </?
-                        // To `InitialRemainOneWhitespace`.
+                        // `</` that a letter does not follow starts a bogus comment.
                         out.push_bytes(b"</")?;
 
-                        self.last_space = 0;
-                        self.step = Step::InitialRemainOneWhitespace;
+                        self.reference_pending = false;
+
+                        self.step_counter = 255;
+                        self.step = Step::Doctype;
                     },
                     Step::StartTag => push_name_byte(&mut self.tag, e),
                     Step::EndTag => (),
@@ -1509,6 +1579,7 @@ impl HTMLMinifierHelper {
 
                         if self.in_end_tag {
                             start = p + 1;
+                            self.digest_tag_attribute(e);
                         } else {
                             start = p;
 
