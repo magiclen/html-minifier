@@ -1,10 +1,62 @@
 use educe::Educe;
 
-use crate::{
-    functions::is_whitespace,
-    html_minifier_helper::{next_comment_state, raw_text_end_tag},
-    script_data::ScriptData,
-};
+use crate::{functions::*, script_data::ScriptData};
+
+/// The longest tag name that is collected. Longer names are compared by their first bytes.
+const MAX_TAG_LENGTH: usize = 255;
+
+/// The deepest nesting of elements that is followed. The rest of the input after a deeper element is kept as it is.
+const MAX_DEPTH: usize = 1024;
+
+/// Check whether an HTML start tag leaves foreign content, such as `<p>` in `<svg>`.
+fn is_breakout_tag(tag: &[u8]) -> bool {
+    matches!(
+        tag,
+        b"b" | b"big"
+            | b"blockquote"
+            | b"body"
+            | b"br"
+            | b"center"
+            | b"code"
+            | b"dd"
+            | b"div"
+            | b"dl"
+            | b"dt"
+            | b"em"
+            | b"embed"
+            | b"h1"
+            | b"h2"
+            | b"h3"
+            | b"h4"
+            | b"h5"
+            | b"h6"
+            | b"head"
+            | b"hr"
+            | b"i"
+            | b"img"
+            | b"li"
+            | b"listing"
+            | b"menu"
+            | b"meta"
+            | b"nobr"
+            | b"ol"
+            | b"p"
+            | b"pre"
+            | b"ruby"
+            | b"s"
+            | b"small"
+            | b"span"
+            | b"strong"
+            | b"strike"
+            | b"sub"
+            | b"sup"
+            | b"table"
+            | b"tt"
+            | b"u"
+            | b"ul"
+            | b"var"
+    )
+}
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 enum Namespace {
@@ -28,6 +80,16 @@ struct Element {
     length:      usize,
     namespace:   Namespace,
     integration: Integration,
+}
+
+impl Element {
+    /// Check whether a start tag in this element follows the rules for HTML content, such as a tag in `<foreignObject>`.
+    fn takes_html_tag(&self, tag: &[u8]) -> bool {
+        self.namespace == Namespace::Html
+            || self.integration == Integration::Html
+            || (self.integration == Integration::MathText
+                && !matches!(tag, b"mglyph" | b"malignmark"))
+    }
 }
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
@@ -206,7 +268,9 @@ pub(crate) struct ForeignContent {
     root:             bool,
     root_namespace:   Namespace,
     elements:         Vec<Element>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
     names:            Vec<u8>,
+    #[educe(Debug(method = "str_bytes_fmt"))]
     tag:              Vec<u8>,
     end_tag:          bool,
     attribute:        [u8; 8],
@@ -214,9 +278,14 @@ pub(crate) struct ForeignContent {
     encoding_seen:    bool,
     collect_encoding: bool,
     encoding:         Encoding,
+    /// Whether the current `font` start tag has a `color`, `face` or `size` attribute, which makes it leave foreign content.
+    font_breakout:    bool,
+    /// Whether an HTML start tag that leaves foreign content, such as `<p>` in `<svg>`, has ended the region.
+    breakout:         bool,
     quote:            u8,
     counter:          u8,
     declaration:      u8,
+    #[educe(Debug(method = "str_bytes_fmt"))]
     raw_end:          &'static [u8],
     script_data:      ScriptData,
 }
@@ -236,6 +305,8 @@ impl ForeignContent {
         self.encoding_seen = false;
         self.collect_encoding = false;
         self.encoding = Encoding::default();
+        self.font_breakout = false;
+        self.breakout = false;
         self.quote = 0;
         self.counter = 0;
         self.declaration = 0;
@@ -261,9 +332,72 @@ impl ForeignContent {
         self.plaintext
     }
 
+    /// Get the name of the HTML start tag that has ended the region, such as `p` for `<svg><p>`.
+    pub(crate) fn breakout_tag(&self) -> Option<&[u8]> {
+        self.breakout.then_some(self.tag.as_slice())
+    }
+
     pub(crate) fn can_finish(&self) -> bool {
         // Open ordinary elements and trailing literal tag prefixes do not require closing tags.
-        self.plaintext || matches!(self.step, Step::Data | Step::TagOpen | Step::EndTagOpen)
+        matches!(self.step, Step::Data | Step::TagOpen | Step::EndTagOpen)
+    }
+
+    /// Skip the bytes that cannot change the state, stopping at a CR or an ASCII control character for the caller.
+    pub(crate) fn skip(&self, bytes: &[u8], mut p: usize) -> usize {
+        let stops = match self.step {
+            Step::Data => [b'<'; 2],
+            Step::QuotedValue if !self.collect_encoding => [self.quote; 2],
+            Step::BogusComment => [b'>'; 2],
+            Step::Comment if self.counter == 0 => [b'-'; 2],
+            Step::Cdata if self.counter == 0 => [b']'; 2],
+            Step::Raw if self.counter == 0 => {
+                if self.raw_end != b"</script" {
+                    [b'<'; 2]
+                } else if !self.script_data.can_skip() {
+                    return p;
+                } else if self.script_data.tracks_dash() {
+                    *b"<-"
+                } else {
+                    [b'<'; 2]
+                }
+            },
+            _ => return p,
+        };
+
+        while let Some(&e) = bytes.get(p) {
+            if stops.contains(&e) || e == b'\r' || is_ascii_control(e) {
+                break;
+            }
+
+            p += 1;
+        }
+
+        p
+    }
+
+    /// Feed the byte at `p` and the bytes after it until a CR, an ASCII control character or the end of the region.
+    /// Return the position of the last consumed byte.
+    pub(crate) fn feed_run(&mut self, bytes: &[u8], mut p: usize) -> usize {
+        self.feed(bytes[p]);
+
+        // The caller removes a LF after a CR, so the run stops after a CR.
+        if bytes[p] == b'\r' {
+            return p;
+        }
+
+        while self.active && !self.plaintext {
+            let next = self.skip(bytes, p + 1);
+
+            match bytes.get(next) {
+                Some(&e) if e != b'\r' && !is_ascii_control(e) => {
+                    self.feed(e);
+                    p = next;
+                },
+                _ => return next - 1,
+            }
+        }
+
+        p
     }
 
     fn begin_tag(&mut self, e: u8, end_tag: bool) {
@@ -273,6 +407,7 @@ impl ForeignContent {
         self.encoding_seen = false;
         self.collect_encoding = false;
         self.encoding = Encoding::default();
+        self.font_breakout = false;
         self.step = Step::TagName;
     }
 
@@ -284,12 +419,16 @@ impl ForeignContent {
     }
 
     fn end_attribute_name(&mut self) {
+        // A name longer than the buffer matches no name that is checked.
+        let name = self.attribute.get(..usize::from(self.attribute_length)).unwrap_or_default();
+
         self.collect_encoding = !self.end_tag
             && self.tag == b"annotation-xml"
             && !self.encoding_seen
-            && self.attribute_length == 8
-            && &self.attribute == b"encoding";
+            && name == b"encoding";
         self.encoding_seen |= self.collect_encoding;
+        self.font_breakout |=
+            !self.end_tag && self.tag == b"font" && matches!(name, b"color" | b"face" | b"size");
     }
 
     fn end_value(&mut self) {
@@ -306,12 +445,8 @@ impl ForeignContent {
         let Some(parent) = self.elements.last() else {
             return Namespace::Html;
         };
-        let html = parent.namespace == Namespace::Html
-            || parent.integration == Integration::Html
-            || (parent.integration == Integration::MathText
-                && !matches!(self.tag.as_slice(), b"mglyph" | b"malignmark"));
 
-        if html {
+        if parent.takes_html_tag(&self.tag) {
             match self.tag.as_slice() {
                 b"svg" => Namespace::Svg,
                 b"math" => Namespace::Math,
@@ -327,11 +462,36 @@ impl ForeignContent {
         }
     }
 
+    /// Close the foreign elements until an HTML element or an integration point, like browsers do for `<p>` in `<svg>`.
+    /// Return `true` when the root is closed, which ends the region.
+    fn break_out(&mut self) -> bool {
+        while let Some(element) = self.elements.last() {
+            if element.namespace == Namespace::Html || element.integration != Integration::None {
+                return false;
+            }
+
+            self.names.truncate(element.start);
+            self.elements.pop();
+        }
+
+        self.active = false;
+
+        true
+    }
+
     fn finish_tag(&mut self, self_closing: bool) {
         self.end_value();
         self.step = Step::Data;
 
         if self.end_tag {
+            // `</br>` and `</p>` leave foreign content like the HTML start tags below.
+            if matches!(self.tag.as_slice(), b"br" | b"p")
+                && self.elements.last().is_some_and(|element| element.namespace != Namespace::Html)
+                && self.break_out()
+            {
+                return;
+            }
+
             if let Some(index) = self.elements.iter().rposition(|element| {
                 self.names[element.start..element.start + element.length] == self.tag
             }) {
@@ -339,6 +499,14 @@ impl ForeignContent {
                 self.elements.truncate(index);
                 self.active = !self.elements.is_empty();
             }
+            return;
+        }
+
+        if (self.font_breakout || is_breakout_tag(&self.tag))
+            && self.elements.last().is_some_and(|parent| !parent.takes_html_tag(&self.tag))
+            && self.break_out()
+        {
+            self.breakout = true;
             return;
         }
 
@@ -370,6 +538,12 @@ impl ForeignContent {
                 self.active = false;
             }
             self.root = false;
+            return;
+        }
+
+        if self.elements.len() == MAX_DEPTH {
+            // Like the content of `plaintext`, the rest of the input is kept as it is.
+            self.plaintext = true;
             return;
         }
 
@@ -435,7 +609,8 @@ impl ForeignContent {
                     b'>' => self.finish_tag(false),
                     b'/' => self.step = Step::SelfClosing,
                     _ if is_whitespace(e) => self.step = Step::BeforeAttribute,
-                    _ => self.tag.push(e.to_ascii_lowercase()),
+                    _ if self.tag.len() < MAX_TAG_LENGTH => self.tag.push(e.to_ascii_lowercase()),
+                    _ => (),
                 },
                 Step::BeforeAttribute => match e {
                     b'>' => self.finish_tag(false),
@@ -524,7 +699,7 @@ impl ForeignContent {
                             continue;
                         }
                     } else if self.declaration == 1 && e == b'-' {
-                        self.counter = 4;
+                        self.counter = COMMENT_START;
                         self.step = Step::Comment;
                     } else if self.declaration == 2 && e == b"[CDATA["[usize::from(self.counter)] {
                         self.counter += 1;

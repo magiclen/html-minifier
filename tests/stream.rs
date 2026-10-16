@@ -278,6 +278,10 @@ fn preserved_html_tracks_quotes_comments_and_raw_children() {
             ("<pre><![CDATA[it's]]></pre><p>a b</p>", "<pre><![CDATA[it's]]></pre><p>a   b</p>"),
             ("<pre><!-->x</pre><p>a b</p>", "<pre><!-->x</pre><p>a   b</p>"),
             ("<pre><!-- --!></pre><p>a b</p>", "<pre><!-- --!></pre><p>a   b</p>"),
+            (
+                "<listing>a  <pre>b</pre>  c</listing><p>d e</p>",
+                "<listing>a  <pre>b</pre>  c</listing><p>d   e</p>",
+            ),
         ],
         default_options,
     );
@@ -896,6 +900,31 @@ fn foreign_content_returns_to_preserved_html() {
              x</code><p>y   z</p>",
         )],
         preserve_code,
+    );
+}
+
+#[test]
+fn foreign_content_ends_at_breakout_tags() {
+    test_cases(
+        &[
+            (
+                "<svg><path/><p>a b</p></svg><p>x y</p>",
+                "<svg><path/><p>a   b</p></svg><p>x   y</p>",
+            ),
+            (
+                "<svg><p></p><style>a::after{content:'</svg>  x'}</style><p>x y</p>",
+                "<svg><p></p><style>a::after { content: '</svg>  x' }</style><p>x   y</p>",
+            ),
+            (
+                "<pre><svg><pre></svg></pre>  x</pre><p>y z</p>",
+                "<pre><svg><pre></svg></pre>  x</pre><p>y   z</p>",
+            ),
+            (
+                "<math><mrow><font>a   b</font><font size=1>c d</font></mrow></math>",
+                "<math><mrow><font>a   b</font><font size=1>c   d</font></mrow></math>",
+            ),
+        ],
+        default_options,
     );
 }
 

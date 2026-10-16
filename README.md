@@ -14,7 +14,7 @@ HTML is minified by the following rules:
 * HTML whitespace (spaces, tabs, line feeds, carriage returns and form feeds) is collapsed to a single space or line feed where applicable.
 * Empty attribute values are collapsed. (e.g `<input readonly="">` => `<input readonly>` )
 * The inner HTML of all elements is minified except for the following elements:
-  * `<pre>`
+  * `<pre>` and `<listing>`
   * `<textarea>`
   * `<title>` (only whitespace is collapsed)
   * `<xmp>`, `<iframe>`, `<noembed>` and `<noframes>`
@@ -31,7 +31,7 @@ The original (non-minified) HTML doesn't need to be completely generated before 
 
 `finish` reports incomplete tags, comments and special elements. It preserves a trailing literal `<` or `</`. It does not validate the whole document or require every ordinary element to have a closing tag.
 
-Foreign SVG and MathML content is preserved as one region, including comments and embedded code. HTML minification resumes after the region ends. A `plaintext` element consumes all remaining input, including text that looks like an end tag. Preserved content still follows the control-character and line-break rules.
+Foreign SVG and MathML content is preserved as one region, including comments and embedded code. HTML minification resumes after the region ends. Like browsers, an HTML tag that cannot be in foreign content, such as `<p>` directly in `<svg>`, ends the region. A `plaintext` element consumes all remaining input, including text that looks like an end tag. Preserved content still follows the control-character and line-break rules.
 
 ## Examples
 

@@ -47,41 +47,6 @@ fn embedded_type(tag: &[u8], value: &[u8]) -> Option<bool> {
     }
 }
 
-/// The state of a comment right after `<!--`.
-const COMMENT_START: u8 = 4;
-
-/// Follow the comment states of the HTML tokenizer that can end a comment.
-/// The state is 0 in the text, 1 after `-`, 2 after `--`, 3 after `--!`, 4 after `<!--`, and 5 after `<!---`.
-/// Return `None` when the comment ends.
-#[inline]
-pub(crate) const fn next_comment_state(state: u8, e: u8) -> Option<u8> {
-    match (state, e) {
-        (2..=5, b'>') => None,
-        (4, b'-') => Some(5),
-        (1 | 2 | 5, b'-') => Some(2),
-        (0 | 3, b'-') => Some(1),
-        (2, b'!') => Some(3),
-        _ => Some(0),
-    }
-}
-
-/// Get the end tag that ends the raw text of an element, such as `</script` for `script`.
-pub(crate) fn raw_text_end_tag(tag: &[u8]) -> Option<&'static [u8]> {
-    let end_tag: &'static [u8] = match tag {
-        b"script" => b"</script",
-        b"style" => b"</style",
-        b"textarea" => b"</textarea",
-        b"title" => b"</title",
-        b"xmp" => b"</xmp",
-        b"iframe" => b"</iframe",
-        b"noembed" => b"</noembed",
-        b"noframes" => b"</noframes",
-        _ => return None,
-    };
-
-    Some(end_tag)
-}
-
 #[derive(Educe, Debug, Copy, Clone, Eq, PartialEq)]
 #[educe(Default)]
 enum Step {
@@ -222,6 +187,9 @@ pub struct HTMLMinifierHelper {
     // Steps
     step:                Step,
     step_counter:        u8,
+    /// The name of the preserved element, such as `pre`, whose end tag ends the preserved content.
+    #[educe(Debug(method = "str_bytes_fmt"))]
+    preserved_root:      &'static [u8],
     preserved_step:      PreservedStep,
     preserved_depth:     usize,
     preserved_counter:   u8,
@@ -364,7 +332,12 @@ impl HTMLMinifierHelper {
                 }
             },
             b"pre" => {
-                self.start_preserved();
+                self.start_preserved(b"pre");
+                Step::Pre
+            },
+            b"listing" => {
+                // Browsers keep the whitespace of `listing` like `pre`.
+                self.start_preserved(b"listing");
                 Step::Pre
             },
             b"code" => {
@@ -373,7 +346,7 @@ impl HTMLMinifierHelper {
 
                     Step::InitialRemainOneWhitespace
                 } else {
-                    self.start_preserved();
+                    self.start_preserved(b"code");
                     Step::Code
                 }
             },
@@ -434,10 +407,15 @@ impl HTMLMinifierHelper {
     /// Skip the bytes of raw text or preserved content that can neither start an end tag nor need a change.
     #[inline]
     fn skip_content(&self, text_bytes: &[u8], mut p: usize) -> usize {
+        // A LF after a CR is removed, so it is not skipped.
+        if self.follows_cr(text_bytes, p) {
+            return p;
+        }
+
         if self.step == Step::Foreign
             || (matches!(self.step, Step::Pre | Step::Code) && self.foreign.is_active())
         {
-            return p;
+            return self.foreign.skip(text_bytes, p);
         }
 
         let script = matches!(self.step, Step::ScriptDefault | Step::ScriptJavaScript);
@@ -451,8 +429,7 @@ impl HTMLMinifierHelper {
             self.step_counter == 0 && (!script || self.script_data.can_skip())
         };
 
-        // A LF after a CR is removed, so it is not skipped.
-        if plain && !self.follows_cr(text_bytes, p) {
+        if plain {
             while let Some(&e) = text_bytes.get(p) {
                 if (!plaintext && e == b'<')
                     || e == b'\r'
@@ -633,7 +610,8 @@ impl HTMLMinifierHelper {
     }
 
     #[inline]
-    fn start_preserved(&mut self) {
+    fn start_preserved(&mut self, root: &'static [u8]) {
+        self.preserved_root = root;
         self.preserved_step = PreservedStep::Data;
         self.preserved_depth = 1;
         self.preserved_counter = 0;
@@ -722,6 +700,9 @@ impl HTMLMinifierHelper {
 
             if self.foreign.is_plaintext() {
                 self.step = Step::Plaintext;
+            } else if self.foreign.breakout_tag() == Some(self.preserved_root) {
+                // The HTML start tag that ends the region opens a nested element, such as `<pre>` in `<pre><svg><pre>`.
+                self.preserved_depth += 1;
             }
 
             return false;
@@ -763,8 +744,7 @@ impl HTMLMinifierHelper {
                         self.preserved_plaintext = self.preserved_tag == b"plaintext";
                     }
 
-                    let root: &[u8] = if self.step == Step::Pre { b"pre" } else { b"code" };
-                    if self.preserved_tag == root {
+                    if self.preserved_tag == self.preserved_root {
                         if self.preserved_end_tag {
                             self.preserved_depth -= 1;
                             if self.preserved_depth == 0 {
@@ -844,6 +824,7 @@ impl HTMLMinifierHelper {
         self.tag.clear();
         self.attribute_type.clear();
         self.preserved_tag.clear();
+        self.preserved_root = b"";
         self.preserved_step = PreservedStep::default();
         self.css.reset();
         self.js.reset(false);
@@ -923,18 +904,27 @@ impl HTMLMinifierHelper {
                         out.push_bytes(&text_bytes[start..p])?;
                         start = p + 1;
                     } else {
+                        self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
+
                         if self.step == Step::Foreign {
-                            self.foreign.feed(e);
+                            // The bytes that need no change are fed in one run.
+                            p = self.foreign.feed_run(text_bytes, p);
 
                             if self.foreign.is_plaintext() {
                                 self.step = Step::Plaintext;
+                            } else if let Some(tag) = self.foreign.breakout_tag() {
+                                // The HTML start tag that ends the region decides the next step, such as `<pre>` in `<svg><pre>`.
+                                self.tag.clear();
+                                self.tag.extend_from_slice(tag);
+
+                                self.step = self.end_start_tag_and_get_next_step(
+                                    out, text_bytes, &mut start, p,
+                                )?;
                             } else if !self.foreign.is_active() {
                                 self.last_space = 0;
                                 self.step = Step::InitialRemainOneWhitespace;
                             }
                         }
-
-                        self.normalize_line_break(e, out, text_bytes, &mut start, p)?;
                     }
                 } else if matches!(self.step, Step::Pre | Step::Code) {
                     if is_ascii_control(e) {
