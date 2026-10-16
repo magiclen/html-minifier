@@ -574,5 +574,8 @@ fn minify_sample_page() {
         .digest(include_str!("data/w3schools.com_tryhow_css_example_website.htm"))
         .unwrap();
 
-    assert_eq!(include_str!("data/index.min.html").as_bytes(), html_minifier.get_html());
+    // Git may check out the expected fixture with CRLF on Windows.
+    let expected = include_str!("data/index.min.html").replace("\r\n", "\n");
+
+    assert_eq!(expected.as_bytes(), html_minifier.get_html());
 }
