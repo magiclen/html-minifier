@@ -147,7 +147,7 @@ JavaScript and CSS minification only removes comments and whitespace, so the cod
 
 Use `HTMLMinifierHelper` to supply an output writer. Wrap a file in `BufWriter` to combine small writes.
 
-```rust,no_run
+```rust
 use html_minifier::HTMLMinifierHelper;
 
 use std::fs::File;
