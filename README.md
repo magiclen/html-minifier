@@ -17,7 +17,7 @@ HTML is minified by the following rules:
   * `<pre>` and `<listing>`
   * `<textarea>`
   * `<title>` (only whitespace is collapsed)
-  * `<xmp>`, `<iframe>`, `<noembed>` and `<noframes>`
+  * `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>` and `<noscript>`
   * `<svg>` and `<math>` (including their start tags and HTML children)
   * `<plaintext>` (all content after its start tag is preserved until the end of input)
   * `<code>` (optionally, minified by default)

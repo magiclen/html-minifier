@@ -15,7 +15,7 @@ HTML is minified by the following rules:
   * `<pre>` and `<listing>`
   * `<textarea>`
   * `<title>` (only whitespace is collapsed)
-  * `<xmp>`, `<iframe>`, `<noembed>` and `<noframes>`
+  * `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>` and `<noscript>`
   * `<svg>` and `<math>` (including their start tags and HTML children)
   * `<plaintext>` (all content after its start tag is preserved until the end of input)
   * `<code>` (optionally, minified by default)
@@ -190,6 +190,9 @@ pub use html_writer::*;
 
 use crate::functions::*;
 
+/// The most capacity that is reserved for the output before its size is known.
+const MAX_OUTPUT_RESERVE: usize = 64 * 1024;
+
 /// This struct helps you generate and minify your HTML code in the same time. The output destination is inside this struct.
 #[derive(Educe, Clone)]
 #[educe(Debug, Default(new))]
@@ -265,7 +268,9 @@ impl HTMLMinifier {
     pub fn digest<S: AsRef<[u8]>>(&mut self, text: S) -> Result<(), HTMLMinifierError> {
         let text = text.as_ref();
 
-        self.out.reserve(text.len());
+        if self.out.capacity() == 0 {
+            self.out.reserve_exact(text.len().min(MAX_OUTPUT_RESERVE));
+        }
 
         self.helper.digest(text, &mut self.out)
     }
@@ -281,7 +286,12 @@ impl HTMLMinifier {
     /// # When to Use This?
     ///
     /// If the text has been minified, you can consider to use this method to get a better performance.
-    #[allow(clippy::missing_safety_doc)]
+    ///
+    /// # Safety
+    ///
+    /// This method cannot cause undefined behavior.
+    /// It is `unsafe` because the text skips the minifier.
+    /// Use it only for complete minified HTML at a point where the previous input has ended, such as between two elements.
     #[inline]
     pub unsafe fn indigest<S: AsRef<[u8]>>(&mut self, text: S) {
         self.out.extend_from_slice(text.as_ref());
@@ -310,6 +320,7 @@ pub fn minify<S: AsRef<str>>(html: S) -> Result<String, HTMLMinifierError> {
 
     let html = html.as_ref();
 
+    // The output is almost never longer than the input, so one allocation is usually enough.
     let mut minified_html = String::with_capacity(html.len());
 
     // The input is UTF-8, and the helper only removes ASCII bytes or whole comments and only adds ASCII bytes between characters.

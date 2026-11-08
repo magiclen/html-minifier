@@ -38,6 +38,8 @@ fn hex_digit_value(e: u8) -> u32 {
 #[educe(Debug, Default)]
 pub(crate) struct CSSMinifier {
     step:           CSSStep,
+    /// Where to resume after a string, escape or URL.
+    token_step:     CSSStep,
     /// The last two written bytes, with the latest one at the end. 0 means nothing.
     last:           [u8; 2],
     /// Whether the latest written byte ends an escape, which then works like a name byte.
@@ -64,7 +66,7 @@ pub(crate) struct CSSMinifier {
     cdo:            u8,
     /// The quote of the current string.
     quote:          u8,
-    /// The state of an escape in a string, a URL or a custom property value.
+    /// The state of an escape in a string or URL.
     /// 1 is after a backslash, and 2 to 7 are in a hex escape with 1 to 6 hex digits.
     escape:         u8,
     hex_digits:     u8,
@@ -74,7 +76,6 @@ pub(crate) struct CSSMinifier {
     /// Whether whitespace has been removed at the start of a custom property value.
     custom_space:   bool,
     custom_depth:   u32,
-    custom_quote:   u8,
     /// 1 after `/`, 2 in a comment, and 3 in a comment after `*`.
     custom_comment: u8,
     comment:        HeldComment,
@@ -100,6 +101,8 @@ impl CSSMinifier {
     }
 
     /// Check whether the latest written token and a token starting with `next` become different tokens without anything between them.
+    // Without forced inlining, LLVM may not inline this, and CSS minification gets slower.
+    #[inline(always)]
     fn merges(&self, next: u8) -> bool {
         let [before, last] = self.last;
 
@@ -113,11 +116,15 @@ impl CSSMinifier {
             || (last == b'|' && next == b'|')
             || (last == b'/' && next == b'*')
             || (last == b'<' && matches!(next, b'!' | b'/'))
+            // Keep a separator before a possible HTML end tag.
+            || (before == b'<' && last == b'/' && matches!(next, b's' | b'S'))
             || (before == b'<' && last == b'!' && next == b'-')
             || (before == b'-' && last == b'-' && next == b'>')
     }
 
     /// Write what replaces the pending whitespace and comments before a token starting with `next`.
+    // Without forced inlining, LLVM may not inline this, and CSS minification gets slower.
+    #[inline(always)]
     fn write_gap(&mut self, next: u8, out: &mut impl HTMLWriter) -> Result<(), HTMLMinifierError> {
         let last = self.last[1];
 
@@ -157,7 +164,7 @@ impl CSSMinifier {
         Ok(())
     }
 
-    /// Track a byte after a backslash in a string, a URL or a custom property value.
+    /// Track a byte after a backslash in a string or URL.
     /// Return `false` if the escape has ended before the byte, so the byte has to be handled as usual.
     #[inline]
     fn continue_escape(&mut self, e: u8) -> bool {
@@ -206,8 +213,9 @@ impl CSSMinifier {
         self.name_length = self.name_length.saturating_add(1);
     }
 
-    /// Track a token byte that is written in the normal step.
-    #[inline]
+    /// Track a byte of a CSS token.
+    // Without forced inlining, LLVM may not inline this, and CSS minification gets slower.
+    #[inline(always)]
     fn write_token_byte(&mut self, e: u8) {
         let before = self.last[1];
 
@@ -257,7 +265,7 @@ impl CSSMinifier {
                     self.step = CSSStep::String;
                 },
                 b'(' if url => self.step = CSSStep::URLStart,
-                b':' if self.custom_name => {
+                b':' if self.custom_name && self.token_step == CSSStep::Normal => {
                     self.custom_space = false;
                     self.step = CSSStep::CustomStart;
                 },
@@ -363,7 +371,7 @@ impl CSSMinifier {
                             self.escape = 1;
                         } else if e == self.quote || matches!(e, b'\n' | b'\r' | 0x0C) {
                             // A newline ends a bad string, and the newline stays.
-                            self.step = CSSStep::Normal;
+                            self.step = self.token_step;
                         }
                     }
                 },
@@ -374,7 +382,7 @@ impl CSSMinifier {
                         // A backslash before a newline is not an escape, and the newline stays.
                         self.in_name = false;
                         self.url_matched = 0;
-                        self.step = CSSStep::Normal;
+                        self.step = self.token_step;
                     } else if e.is_ascii_hexdigit() {
                         self.hex_digits = 1;
                         self.hex_value = hex_digit_value(e);
@@ -382,7 +390,7 @@ impl CSSMinifier {
                     } else {
                         self.name_char(u32::from(e));
                         self.last_escape = true;
-                        self.step = CSSStep::Normal;
+                        self.step = self.token_step;
                     }
                 },
                 CSSStep::HexEscape => {
@@ -401,7 +409,7 @@ impl CSSMinifier {
                         self.name_char(self.hex_value);
                         self.last_escape = true;
                         self.open_hex = !terminator;
-                        self.step = CSSStep::Normal;
+                        self.step = self.token_step;
 
                         if !terminator {
                             continue;
@@ -410,16 +418,20 @@ impl CSSMinifier {
                 },
                 CSSStep::URLStart => {
                     if is_whitespace(e) {
-                        // The whitespace at the start of `url()` is not a part of the URL.
-                        if run < p {
-                            out.push_bytes(&bytes[run..p])?;
-                        }
+                        if self.token_step == CSSStep::Custom {
+                            self.wrote(e);
+                        } else {
+                            // The whitespace at the start of `url()` is not a part of the URL.
+                            if run < p {
+                                out.push_bytes(&bytes[run..p])?;
+                            }
 
-                        run = p + 1;
+                            run = p + 1;
+                        }
                     } else {
                         // A quoted URL is an ordinary string argument.
                         self.step = if matches!(e, b'"' | b'\'' | b')') {
-                            CSSStep::Normal
+                            self.token_step
                         } else {
                             self.escape = 0;
                             CSSStep::URLBody
@@ -435,7 +447,11 @@ impl CSSMinifier {
                         if e == b'\\' {
                             self.escape = 1;
                         } else if e == b')' {
-                            self.step = CSSStep::Normal;
+                            if self.token_step == CSSStep::Custom {
+                                self.custom_depth -= 1;
+                            }
+
+                            self.step = self.token_step;
                         }
                     }
                 },
@@ -456,9 +472,8 @@ impl CSSMinifier {
                         }
 
                         self.custom_depth = 0;
-                        self.custom_quote = 0;
                         self.custom_comment = 0;
-                        self.escape = 0;
+                        self.token_step = CSSStep::Custom;
                         self.step = CSSStep::Custom;
 
                         continue;
@@ -472,28 +487,21 @@ impl CSSMinifier {
                             b'/' if self.custom_comment == 3 => 0,
                             _ => 2,
                         };
-                    } else if self.escape > 0 && self.continue_escape(e) {
-                        // The byte belongs to an escape.
-                    } else if self.custom_quote != 0 {
-                        if e == b'\\' {
-                            self.escape = 1;
-                        } else if e == self.custom_quote || matches!(e, b'\n' | b'\r' | 0x0C) {
-                            self.custom_quote = 0;
-                        }
+                        self.wrote(e);
                     } else if self.custom_comment == 1 && e == b'*' {
                         self.custom_comment = 2;
+                        self.wrote(e);
                     } else {
                         self.custom_comment = 0;
 
                         match e {
                             b'/' => self.custom_comment = 1,
-                            b'\\' => self.escape = 1,
-                            b'"' | b'\'' => self.custom_quote = e,
                             b'(' | b'[' | b'{' => {
                                 self.custom_depth = self.custom_depth.saturating_add(1)
                             },
                             b')' | b']' => self.custom_depth = self.custom_depth.saturating_sub(1),
                             b';' | b'}' if self.custom_depth == 0 => {
+                                self.token_step = CSSStep::Normal;
                                 self.step = CSSStep::Normal;
 
                                 continue;
@@ -501,9 +509,9 @@ impl CSSMinifier {
                             b'}' => self.custom_depth -= 1,
                             _ => (),
                         }
-                    }
 
-                    self.wrote(e);
+                        self.write_token_byte(e);
+                    }
                 },
             }
 

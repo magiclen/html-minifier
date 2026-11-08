@@ -134,7 +134,7 @@ pub(crate) struct JSMinifier {
     /// Whether the script starts with `#`, which can start `#!`.
     hashbang:                 bool,
     /// The token state before a comment that is written as tokens, such as `<!--`.
-    saved_token:              (Token, bool),
+    saved_token:              (Token, bool, bool, bool),
     /// How many bytes of `<!--` have been matched in the input.
     raw_open:                 u8,
     /// How many bytes of `<script` have been matched in the input after `<!--`.
@@ -384,7 +384,7 @@ impl JSMinifier {
     /// Find `#!` at the start, and `<!--` and `-->` at the start of a line in a classic script.
     /// They start comment lines that are kept.
     fn starts_line_comment(&mut self, e: u8, adjacent: bool, first: bool) -> bool {
-        let saved = (self.token, self.after_dot);
+        let saved = (self.token, self.after_dot, self.control_word, self.after_for);
 
         if self.hashbang {
             self.hashbang = false;
@@ -586,7 +586,8 @@ impl JSMinifier {
 
                         if self.starts_line_comment(e, adjacent, first) {
                             // The comment is not a token, so the token state before it comes back.
-                            (self.token, self.after_dot) = self.saved_token;
+                            (self.token, self.after_dot, self.control_word, self.after_for) =
+                                self.saved_token;
                             self.separator = 0;
                             self.step = JSStep::LineKept;
                         } else {

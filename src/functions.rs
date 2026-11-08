@@ -72,6 +72,7 @@ pub(crate) fn raw_text_end_tag(tag: &[u8]) -> Option<&'static [u8]> {
         b"iframe" => b"</iframe",
         b"noembed" => b"</noembed",
         b"noframes" => b"</noframes",
+        b"noscript" => b"</noscript",
         _ => return None,
     };
 

@@ -238,9 +238,14 @@ fn removed_comment_chains_keep_one_whitespace() {
             ("<p>a b</p>", "<p>a<!-- first --> <!-- second --> b</p>"),
             ("<p>ab</p>", "<p>a<!-- first --><!-- second -->b</p>"),
             ("<p>a <b>x</b> b</p>", "<p>a <!-- first --><b>x</b> <!-- second --> b</p>"),
+            ("<p>a</p>", "<p>a</p> <!-- footer -->"),
+            ("<p>a b</p>", "<p>a </> b</p>"),
+            ("<p>a</p>", "<p>a</p> </>"),
+            ("a", "</> a"),
         ],
         default_options,
     );
+    test_cases(&[("a b", "a </>b"), ("a", "</> a")], keep_comments);
 }
 
 #[test]
@@ -339,6 +344,10 @@ fn embedded_end_tag_prefixes_are_replayed() {
                 "<script> s = \"</scr\" + \"ipt>\"; </script>",
             ),
             ("<style>a{content:\"</sty\";}</style>", "<style> a { content: \"</sty\"; } </style>"),
+            (
+                "<style>p{--c:red;color:var(--c,<//**/StYlE>)}</style><p>a b</p>",
+                "<style>p{--c:red;color:var(--c,<//* keep tokens */StYlE>)}</style><p>a   b</p>",
+            ),
             ("<script>a();</SCRIPT><p>b c</p>", "<script> a(); </SCRIPT  ><p>b   c</p>"),
         ],
         minify_embedded,
@@ -447,6 +456,10 @@ fn css_minification_keeps_meaning() {
             ("<style>.\\31  .b{}</style>", "<style>.\\31  .b {}</style>"),
             ("<style><!-- a{b:c}--></style>", "<style><!-- a { b: c } --></style>"),
             ("<style>a{--x: ;color:red}</style>", "<style>a { --x:  ; color: red }</style>"),
+            (
+                r"<style>p{--x:u\72l(a};/*x*/b);background:var(--x)}</style>",
+                r"<style>p { --x: u\72l(a};/*x*/b); background: var(--x) }</style>",
+            ),
         ],
         minify_embedded,
     );
@@ -662,6 +675,10 @@ fn javascript_slashes_keep_regex_and_division_meaning() {
                 "<script>var x<!-- c\n/a  b/.test(s)</script>",
                 "<script>var x <!-- c\n/a  b/.test(s)</script>",
             ),
+            (
+                "<script>if<!-- note\n(true)/a  b/.test('a  b');</script>",
+                "<script>if <!-- note\n (true) /a  b/.test('a  b');</script>",
+            ),
         ],
         default_options,
     );
@@ -722,7 +739,7 @@ fn script_double_escaped_end_tags_stay_in_content() {
 
 #[test]
 fn other_raw_text_elements_keep_literal_markup() {
-    for tag in ["xmp", "iframe", "noembed", "noframes"] {
+    for tag in ["xmp", "iframe", "noembed", "noframes", "noscript"] {
         let input = format!("<{tag}>A<!--B--><b title='x  y'>C</b></{tag}><p>x   y</p>");
         let expected = format!("<{tag}>A<!--B--><b title='x  y'>C</b></{tag}><p>x y</p>");
         test_cases(&[(&expected, &input)], default_options);
